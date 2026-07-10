@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: aim-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aim}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - aim-pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4
+    container_name: aim-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - aim-redis-data:/data
+
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: aim-kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: 4L6r3TWkRUuL5wmkOvhgSQ
+    ports:
+      - "9092:9092"
+
+  nacos:
+    image: nacos/nacos-server:v3.2.2
+    container_name: aim-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-YWltLW5hY29zLXNrZWxldG9uLWF1dGgtc2VjcmV0LWtleS0yMDI2LTAxMjM0NTY3ODk=}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-aim-server}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-aim-security}
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+
+  minio:
+    image: minio/minio
+    container_name: aim-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - aim-minio-data:/data
+
+volumes:
+  aim-pgdata:
+  aim-redis-data:
+  aim-minio-data:

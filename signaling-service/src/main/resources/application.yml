@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: signaling-service
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: signaling-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+dubbo:
+  application:
+    name: signaling-service
+  protocol:
+    name: dubbo
+    port: 20885
+  registry:
+    address: nacos://localhost:8848

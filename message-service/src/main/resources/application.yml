@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: message-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/aim
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: message-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+dubbo:
+  application:
+    name: message-service
+  protocol:
+    name: dubbo
+    port: 20884
+  registry:
+    address: nacos://localhost:8848
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true

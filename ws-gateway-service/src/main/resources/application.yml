@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: ws-gateway-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+dubbo:
+  application:
+    name: ws-gateway-service
+  protocol:
+    name: dubbo
+    port: 20880
+  registry:
+    address: nacos://localhost:8848
+
+aim:
+  websocket:
+    port: 8081

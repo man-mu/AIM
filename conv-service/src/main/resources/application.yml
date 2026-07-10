@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: conv-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/aim
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+dubbo:
+  application:
+    name: conv-service
+  protocol:
+    name: dubbo
+    port: 20883
+  registry:
+    address: nacos://localhost:8848
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true

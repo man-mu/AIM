@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: file-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+
+dubbo:
+  application:
+    name: file-service
+  protocol:
+    name: dubbo
+    port: 20886
+  registry:
+    address: nacos://localhost:8848
+
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: aim
