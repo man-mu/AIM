@@ -16,21 +16,23 @@
 
 ```text
 aim/
-├── pom.xml                       # 父 POM（聚合 + BOM 依赖版本管理）
-├── common/                       # 共享模块（Dubbo 接口、常量、事件 DTO、异常、工具）
-├── gateway-service/              # REST API 网关（Spring Cloud Gateway）
-├── ws-gateway-service/           # WebSocket 网关（Netty + 内部 Dubbo 推送）
-├── user-service/                 # 用户服务（Dubbo Provider）
-├── friend-service/               # 好友服务（Dubbo Provider）
-├── conv-service/                 # 会话群组服务（Dubbo Provider）
-├── message-service/              # 消息引擎（Dubbo + Kafka + Outbox）
-├── signaling-service/            # 信令推送（Kafka Consumer + Fanout）
-├── file-service/                 # 文件管理（MinIO）
-├── bot-service/                  # Phase 2: Bot 管理 + AI 执行
-├── kb-service/                   # Phase 2: 知识库 RAG
-├── llm-gateway-service/          # Phase 2: LLM 模型网关
-├── docker-compose.yml            # 本地基础设施（PG/Redis/Kafka/Nacos/MinIO）
-└── plan.md                       # 骨架初始化计划
+├── backend/                      # 后端微服务 Monorepo
+│   ├── pom.xml                   # 父 POM（聚合 + BOM 依赖版本管理）
+│   ├── common/                   # 共享模块（Dubbo 接口、常量、事件 DTO、异常、工具）
+│   ├── gateway-service/          # REST API 网关（Spring Cloud Gateway）
+│   ├── ws-gateway-service/       # WebSocket 网关（Netty + 内部 Dubbo 推送）
+│   ├── user-service/             # 用户服务（Dubbo Provider）
+│   ├── friend-service/           # 好友服务（Dubbo Provider）
+│   ├── conv-service/             # 会话群组服务（Dubbo Provider）
+│   ├── message-service/          # 消息引擎（Dubbo + Kafka + Outbox）
+│   ├── signaling-service/        # 信令推送（Kafka Consumer + Fanout）
+│   ├── file-service/             # 文件管理（MinIO）
+│   ├── bot-service/              # Phase 2: Bot 管理 + AI 执行
+│   ├── kb-service/               # Phase 2: 知识库 RAG
+│   ├── llm-gateway-service/      # Phase 2: LLM 模型网关
+│   └── docker-compose.yml        # 本地基础设施（PG/Redis/Kafka/Nacos/MinIO）
+├── AGENTS.md                     # 项目开发规范
+└── .gitignore
 ```
 
 每个微服务模块内部结构：
@@ -77,6 +79,8 @@ xxx-service/
 - 不要新增循环依赖；服务间调用方向必须单向：`gateway → 业务服务`、`message → Kafka → signaling → ws-gateway`。
 
 ## 命令
+
+以下命令在 `backend/` 目录下执行：
 
 ```bash
 mvn validate                     # 验证 POM 结构与依赖解析
