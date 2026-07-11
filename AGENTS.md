@@ -5,14 +5,6 @@
 - 主/从 agent 必须默认使用 `简体中文` 作为自然语言。
 - 写文档、总结、计划、问题澄清时优先中文；代码标识符和命令保持原文。
 
-## 概览
-
-AIM 是面向多人在线的即时通讯系统，内置可自部署的 AI 助手，将大模型能力深度集成到聊天场景中。后端为 Spring Boot 3.5.16 微服务（Spring Cloud Alibaba 2025.0.0.0 + Dubbo 3.3.6），基础设施包含 PostgreSQL、Redis、Kafka、Nacos、MinIO。
-
-- 包名前缀：`lanshan.manmu`
-- 服务命名：`xxx-service`
-- 构建工具：Maven 3.9.16（Monorepo 多模块，父 POM 统一 BOM 版本管理）
-- 不使用 Flyway，手动管理数据库 SQL
 
 ## 工作流
 
