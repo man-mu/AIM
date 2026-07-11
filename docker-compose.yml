@@ -2,7 +2,6 @@ services:
   postgres:
     image: postgres:16
     container_name: aim-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-aim}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -11,11 +10,13 @@ services:
       - "5432:5432"
     volumes:
       - aim-pgdata:/var/lib/postgresql/data
+      - ./docs/sql/00-init.sh:/docker-entrypoint-initdb.d/00-init.sh
+      - ./docs/sql/nacos-schema.sql:/docker-entrypoint-initdb.d/nacos-schema.sql
+      - ./docs/sql/aim-schema.sql:/docker-entrypoint-initdb.d/aim-schema.sql
 
   redis:
     image: redis:7.4
     container_name: aim-redis
-    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -24,7 +25,6 @@ services:
   kafka:
     image: apache/kafka:3.9.0
     container_name: aim-kafka
-    restart: unless-stopped
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -41,24 +41,32 @@ services:
       CLUSTER_ID: 4L6r3TWkRUuL5wmkOvhgSQ
     ports:
       - "9092:9092"
+    volumes:
+      - aim-kafka-data:/var/lib/kafka/data
+      - aim-kafka-secrets:/etc/kafka/secrets
+      - aim-kafka-config:/mnt/shared/config
 
   nacos:
     image: nacos/nacos-server:v3.2.2
     container_name: aim-nacos
-    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_started
     environment:
       MODE: standalone
+      SPRING_DATASOURCE_PLATFORM: postgresql
       NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-YWltLW5hY29zLXNrZWxldG9uLWF1dGgtc2VjcmV0LWtleS0yMDI2LTAxMjM0NTY3ODk=}
       NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-aim-server}
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-aim-security}
     ports:
       - "8848:8848"
       - "9848:9848"
+    volumes:
+      - ./docs/sql/nacos-pg.properties:/home/nacos/conf/application.properties
 
   minio:
     image: minio/minio
     container_name: aim-minio
-    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -72,4 +80,7 @@ services:
 volumes:
   aim-pgdata:
   aim-redis-data:
+  aim-kafka-data:
+  aim-kafka-secrets:
+  aim-kafka-config:
   aim-minio-data:
