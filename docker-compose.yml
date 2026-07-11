@@ -10,9 +10,8 @@ services:
       - "5432:5432"
     volumes:
       - aim-pgdata:/var/lib/postgresql/data
-      - ./docs/sql/00-init.sh:/docker-entrypoint-initdb.d/00-init.sh
-      - ./docs/sql/nacos-schema.sql:/docker-entrypoint-initdb.d/nacos-schema.sql
-      - ./docs/sql/aim-schema.sql:/docker-entrypoint-initdb.d/aim-schema.sql
+      - ./docs/sql/init:/docker-entrypoint-initdb.d
+      - ./docs/sql:/aim-sql
 
   redis:
     image: redis:7.4
