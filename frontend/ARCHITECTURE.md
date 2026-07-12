@@ -26,7 +26,7 @@
 | 样式工具 | `class-variance-authority`、`clsx`、`tailwind-merge` | Button、Input、Badge、MessageBubble 等组件变体管理 |
 | 图标 | `lucide-react` | 导航、工具栏、消息操作、文件类型图标 |
 | 虚拟列表 | `@tanstack/react-virtual` | 长会话列表、长消息历史、联系人列表性能优化 |
-| 日期时间 | `dayjs` 或 `date-fns` | epoch 毫秒时间戳格式化；优先封装在 `shared/lib/datetime` |
+| 日期时间 | `dayjs` 或 `date-fns` | epoch 毫秒时间戳格式化；优先封装在 `utils/datetime.ts` |
 | 请求模拟 | `msw` | 在后端接口不完整时做浏览器和测试环境的 API mock |
 | 单元/组件测试 | `vitest` + `@testing-library/react` | hooks、store、组件状态和 Query 行为验证 |
 | E2E 测试 | `playwright` | 登录、发消息、好友申请、文件上传等关键路径 |
@@ -46,76 +46,101 @@
 
 ## 3. 目录结构
 
+本项目不采用完整 Feature-Sliced Design 分层。AIM 当前阶段更适合常见 React 项目结构：公共能力平铺，业务域放到 `modules/`，页面只负责组装。
+
 ```text
 frontend/
 ├── public/
 ├── src/
-│   ├── app/
-│   │   ├── App.tsx
-│   │   ├── providers/
-│   │   │   ├── AppProviders.tsx
-│   │   │   ├── QueryProvider.tsx
-│   │   │   └── RouterProvider.tsx
-│   │   ├── router/
-│   │   │   ├── routeTree.gen.ts
-│   │   │   └── routes/
-│   │   └── styles/
-│   │       └── index.css
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── styles/
+│   │   └── globals.css
+│   ├── routes/
+│   │   ├── router.tsx
+│   │   ├── routeTree.gen.ts
+│   │   └── guards.tsx
 │   ├── pages/
 │   │   ├── auth/
-│   │   ├── workspace/
+│   │   │   ├── LoginPage.tsx
+│   │   │   └── RegisterPage.tsx
+│   │   ├── chats/
+│   │   │   ├── ChatLayout.tsx
+│   │   │   └── ChatPage.tsx
 │   │   ├── contacts/
+│   │   │   └── ContactsPage.tsx
+│   │   ├── notifications/
+│   │   │   └── NotificationsPage.tsx
 │   │   └── settings/
-│   ├── features/
+│   │       └── ProfilePage.tsx
+│   ├── modules/
 │   │   ├── auth/
 │   │   ├── conversation/
 │   │   ├── message/
 │   │   ├── friend/
 │   │   ├── notification/
 │   │   ├── file/
-│   │   └── realtime/
-│   ├── entities/
-│   │   ├── user/
-│   │   ├── conversation/
-│   │   ├── message/
-│   │   └── friend/
-│   ├── shared/
-│   │   ├── api/
-│   │   │   ├── client.ts
-│   │   │   ├── errors.ts
-│   │   │   ├── result.ts
-│   │   │   └── queryKeys.ts
-│   │   ├── config/
-│   │   ├── lib/
-│   │   ├── store/
+│   │   └── user/
+│   ├── api/
+│   │   ├── client.ts
+│   │   ├── errors.ts
+│   │   ├── result.ts
+│   │   └── queryKeys.ts
+│   ├── realtime/
+│   │   ├── wsClient.ts
+│   │   ├── wsEvents.ts
+│   │   └── wsDispatcher.ts
+│   ├── stores/
+│   │   ├── authStore.ts
+│   │   ├── workspaceStore.ts
+│   │   ├── composerStore.ts
+│   │   └── realtimeStore.ts
+│   ├── components/
 │   │   ├── ui/
-│   │   └── types/
-│   ├── test/
-│   │   ├── mocks/
-│   │   └── setup.ts
-│   └── main.tsx
+│   │   └── layout/
+│   ├── hooks/
+│   ├── utils/
+│   ├── config/
+│   ├── types/
+│   └── test/
+│       ├── mocks/
+│       └── setup.ts
 ├── e2e/
 ├── package.json
 └── vite.config.ts
 ```
 
-业务模块推荐内部结构：
+业务模块推荐内部结构。模块里只放和该业务强相关的 API、类型、hooks 和组件：
 
 ```text
-features/message/
+modules/message/
 ├── api/
 │   └── messageApi.ts
-├── model/
-│   ├── message.types.ts
-│   ├── message.schemas.ts
-│   ├── message.mappers.ts
-│   └── message.queries.ts
-├── ui/
+├── hooks/
+│   ├── useMessages.ts
+│   └── useSendMessage.ts
+├── types.ts
+├── schemas.ts
+├── mappers.ts
+├── components/
 │   ├── MessageList.tsx
 │   ├── MessageBubble.tsx
 │   └── MessageComposer.tsx
 └── index.ts
 ```
+
+目录职责：
+
+- `pages/`：路由页面，负责页面级布局和模块组装，不直接写复杂业务逻辑。
+- `modules/`：业务域代码，按 `auth/message/conversation/friend` 等接口域划分。
+- `api/`：全局请求客户端、统一响应解包、错误处理和 Query Key。
+- `realtime/`：WebSocket 连接、心跳、重连和事件分发。
+- `stores/`：Zustand stores，只放客户端状态。
+- `components/ui/`：无业务通用组件，如 Button、Input、Dialog、Avatar。
+- `components/layout/`：应用框架组件，如 AppShell、AppRail、Sidebar。
+- `hooks/`：跨模块通用 hooks。
+- `utils/`：日期、文件大小、ID、断言等纯函数工具。
+- `types/`：跨模块共享的基础类型。
 
 ## 4. 路由设计
 
@@ -140,7 +165,7 @@ features/message/
 
 ## 5. API 接入层
 
-所有 REST 请求经过 `shared/api/client.ts`：
+所有 REST 请求经过 `src/api/client.ts`：
 
 ```ts
 type ApiResult<T> = {
@@ -218,11 +243,11 @@ ws://{host}:8081/ws?token=<access_token>&device_id=<deviceId>
 模块划分：
 
 ```text
-features/realtime/
-├── client/wsClient.ts        # 连接、心跳、重连、send
-├── model/wsEvents.ts         # 上下行 event 类型
-├── model/wsDispatcher.ts     # 事件派发到 Query/Zustand
-└── hooks/useRealtime.ts      # 登录态下启动/关闭连接
+src/realtime/
+├── wsClient.ts        # 连接、心跳、重连、send
+├── wsEvents.ts        # 上下行 event 类型
+├── wsDispatcher.ts    # 事件派发到 Query/Zustand
+└── useRealtime.ts     # 登录态下启动/关闭连接
 ```
 
 处理规则：
@@ -281,8 +306,8 @@ AuthLayout
 
 组件策略：
 
-- `shared/ui` 只放通用无业务组件：`Button`、`Input`、`Badge`、`Avatar`、`Dialog`、`Tabs`、`Spinner`。
-- 业务组件放各自 `features/*/ui` 下，不把业务字段塞进通用组件。
+- `components/ui` 只放通用无业务组件：`Button`、`Input`、`Badge`、`Avatar`、`Dialog`、`Tabs`、`Spinner`。
+- 业务组件放各自 `modules/*/components` 下，不把业务字段塞进通用组件。
 - 消息类型组件按 `msgType` 拆分：`TextMessage`、`ImageMessage`、`FileMessage`、`VoiceMessage`、`VideoMessage`、`LocationMessage`、`SystemMessage`。
 
 ## 9. 数据类型与校验
@@ -359,7 +384,7 @@ CI 检查顺序：
 ## 13. 落地顺序
 
 1. 安装基础依赖：TanStack Router/Query、Zustand、Tailwind、Zod、React Hook Form、Radix、Lucide。
-2. 清理 Vite 默认模板，建立 `app/shared/features/pages` 目录。
+2. 清理 Vite 默认模板，建立 `routes/pages/modules/components/stores/api` 目录。
 3. 建立 API Client、`Result<T>` 解包、错误码映射和 QueryProvider。
 4. 实现 Auth：登录、注册、登出、路由守卫。
 5. 实现主工作台骨架：AppRail、会话列表、聊天面板、详情面板。
