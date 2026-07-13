@@ -1,8 +1,11 @@
+server:
+  port: 8081
+
 spring:
   application:
     name: user-service
   datasource:
-    url: jdbc:postgresql://localhost:5432/aim
+    url: jdbc:postgresql://localhost:5432/aim?currentSchema=%22user%22
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
@@ -27,3 +30,12 @@ dubbo:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
+
+aim:
+  snowflake:
+    worker-id: 0
+
+jwt:
+  secret: ${JWT_SECRET:aim-jwt-secret-key-change-in-production}
+  expire-sec: 7200
+  refresh-sec: 2592000

@@ -36,6 +36,7 @@ public enum ErrorCode {
     USER_TOKEN_EXPIRED    (10006, "Token 已过期"),
     USER_SESSION_NOT_FOUND(10007, "会话不存在"),
     USER_FORBIDDEN        (10008, "用户被禁用"),
+    USER_EMAIL_EXISTS     (10009, "邮箱已被注册"),
 
     // friend-service 2xxxx
     FRIEND_ALREADY_EXISTS    (20001, "已经是好友"),
