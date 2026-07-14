@@ -555,7 +555,16 @@ Phase 1 不实现 Bot 功能，**跳过**。L0 只定义 Phase 1 运行链路所
 
 ### `util/SnowflakeIdWorker.java`
 
-移植自 MAIM `pkg/snowflake`（底层是 `bwmarrin/snowflake`），Java 侧自行实现位运算：
+移植自 MAIM `pkg/snowflake`（底层是 `bwmarrin/snowflake`），Java 侧自行实现位运算。
+
+相比 Twitter 原版简化了位布局：将 `5 bit datacenterId + 5 bit workerId` 合并为 `10 bit workerId`，概念更少、配置更简单。实例总数不变（最多 1024 个），但省掉了机房维度的拆分。
+
+**时钟回拨容忍策略**：区分小回拨与大回拨，避免 NTP 微调导致服务不可用。
+
+| 回拨幅度 | 策略 | 说明 |
+|---|---|---|
+| ≤ 5ms（小回拨） | 继续用 `lastTimestamp` 生成 | NTP 微调常见场景，序列号空间足够兜住 |
+| \> 5ms（大回拨） | 抛 `IllegalStateException` | 回拨幅度大，兜不住，直接报错更安全 |
 
 ```java
 package lanshan.manmu.common.util;
@@ -570,6 +579,8 @@ package lanshan.manmu.common.util;
  *   12 bit     : 序列号（0~4095），同一毫秒内递增
  *
  * Epoch = 2024-01-01 00:00:00 UTC (自定义), 不用 Twitter 原值
+ *
+ * 时钟回拨容忍：≤ 5ms 小回拨继续用 lastTimestamp，> 5ms 大回拨直接报错。
  */
 public class SnowflakeIdWorker {
 
@@ -590,6 +601,9 @@ public class SnowflakeIdWorker {
     private static final long WORKER_ID_SHIFT = SEQUENCE_BITS;
     /** 时间戳左移位数 = 12 + 10 = 22 */
     private static final long TIMESTAMP_SHIFT = SEQUENCE_BITS + WORKER_ID_BITS;
+
+    /** 小回拨容忍阈值（ms），回拨不超过此值时继续用 lastTimestamp 生成 */
+    private static final long CLOCK_BACKWARD_TOLERANCE_MS = 5L;
 
     private final long workerId;
     private long sequence = 0L;

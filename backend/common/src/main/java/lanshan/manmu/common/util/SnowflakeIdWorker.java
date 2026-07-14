@@ -33,6 +33,9 @@ public class SnowflakeIdWorker {
     /** 时间戳左移位数 = 12 + 10 = 22 */
     private static final long TIMESTAMP_SHIFT = SEQUENCE_BITS + WORKER_ID_BITS;
 
+    /** 小回拨容忍阈值（ms），回拨不超过此值时继续用 lastTimestamp 生成 */
+    private static final long CLOCK_BACKWARD_TOLERANCE_MS = 5L;
+
     private final long workerId;
     private long sequence = 0L;
     private long lastTimestamp = -1L;
@@ -51,10 +54,14 @@ public class SnowflakeIdWorker {
     public synchronized long nextId() {
         long timestamp = System.currentTimeMillis();
 
-        // 时钟回拨检测
-        if (timestamp < lastTimestamp)
-            throw new IllegalStateException("Clock moved backwards. Refusing to generate id for "
-                + (lastTimestamp - timestamp) + "ms");
+        if (timestamp < lastTimestamp) {
+            long offset = lastTimestamp - timestamp;
+            if (offset <= CLOCK_BACKWARD_TOLERANCE_MS) {
+                timestamp = lastTimestamp;
+            } else {
+                throw new IllegalStateException("Clock moved backwards " + offset + "ms");
+            }
+        }
 
         if (timestamp == lastTimestamp) {
             sequence = (sequence + 1) & SEQUENCE_MASK;
