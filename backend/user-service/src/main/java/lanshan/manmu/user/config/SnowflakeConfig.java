@@ -11,8 +11,11 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class SnowflakeConfig {
 
-    @Value("${aim.snowflake.worker-id:0}")
-    private long workerId;
+    private final long workerId;
+
+    public SnowflakeConfig(@Value("${aim.snowflake.worker-id:0}") long workerId) {
+        this.workerId = workerId;
+    }
 
     @Bean
     public SnowflakeIdWorker snowflakeIdWorker() {

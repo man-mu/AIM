@@ -4,9 +4,6 @@ import lanshan.manmu.common.rpc.UserRpcService;
 import lanshan.manmu.common.rpc.dto.user.*;
 import lanshan.manmu.user.service.UserService;
 import org.apache.dubbo.config.annotation.DubboService;
-import org.springframework.beans.factory.annotation.Autowired;
-
-import java.util.List;
 
 /**
  * 用户服务 Dubbo Provider 实现。
@@ -14,8 +11,11 @@ import java.util.List;
 @DubboService
 public class UserRpcServiceImpl implements UserRpcService {
 
-    @Autowired
-    private UserService userService;
+    private final UserService userService;
+
+    public UserRpcServiceImpl(UserService userService) {
+        this.userService = userService;
+    }
 
     @Override
     public RegisterResp register(RegisterReq req) {

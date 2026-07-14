@@ -22,7 +22,6 @@ import lanshan.manmu.user.mapper.UserMapper;
 import lanshan.manmu.user.model.entity.User;
 import lanshan.manmu.user.model.entity.UserDevice;
 import lanshan.manmu.user.service.UserService;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -34,23 +33,33 @@ import org.springframework.stereotype.Service;
 @Service
 public class UserServiceImpl implements UserService {
 
-    @Autowired
-    private UserMapper userMapper;
-    @Autowired
-    private UserDeviceMapper deviceMapper;
-    @Autowired
-    private SnowflakeIdWorker snowflake;
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    @Autowired
-    private PasswordEncoder passwordEncoder;
+    private final UserMapper userMapper;
+    private final UserDeviceMapper deviceMapper;
+    private final SnowflakeIdWorker snowflake;
+    private final StringRedisTemplate redisTemplate;
+    private final PasswordEncoder passwordEncoder;
+    private final String jwtSecret;
+    private final long jwtExpireSec;
+    private final long jwtRefreshSec;
 
-    @Value("${jwt.secret}")
-    private String jwtSecret;
-    @Value("${jwt.expire-sec}")
-    private long jwtExpireSec;
-    @Value("${jwt.refresh-sec}")
-    private long jwtRefreshSec;
+    public UserServiceImpl(
+            UserMapper userMapper,
+            UserDeviceMapper deviceMapper,
+            SnowflakeIdWorker snowflake,
+            StringRedisTemplate redisTemplate,
+            PasswordEncoder passwordEncoder,
+            @Value("${jwt.secret}") String jwtSecret,
+            @Value("${jwt.expire-sec}") long jwtExpireSec,
+            @Value("${jwt.refresh-sec}") long jwtRefreshSec) {
+        this.userMapper = userMapper;
+        this.deviceMapper = deviceMapper;
+        this.snowflake = snowflake;
+        this.redisTemplate = redisTemplate;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtSecret = jwtSecret;
+        this.jwtExpireSec = jwtExpireSec;
+        this.jwtRefreshSec = jwtRefreshSec;
+    }
 
     // ==================== 认证 ====================
 
