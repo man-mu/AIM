@@ -192,10 +192,12 @@ public class UserServiceImpl implements UserService {
     public void logout(long userId, String tokenId) {
         JWT jwt = parseAndVerify(tokenId);
         if (jwt == null) {
+            log.info("logout 忽略无效 token: userId={}", userId);
             return;
         }
         String jti = jwt.getPayload("jti") == null ? null : String.valueOf(jwt.getPayload("jti"));
         if (jti == null || jti.isEmpty() || "null".equals(jti)) {
+            log.info("logout token 缺少 jti: userId={}", userId);
             return;
         }
         long expiresAt = extractExpiration(jwt);
@@ -301,6 +303,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void updatePassword(long userId, String oldPwd, String newPwd) {
         User user = userMapper.selectById(userId);
         if (user == null) {

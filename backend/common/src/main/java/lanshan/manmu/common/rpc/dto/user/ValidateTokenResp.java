@@ -14,6 +14,5 @@ public class ValidateTokenResp {
 
     private boolean valid;
     private long userId;
-    private String deviceId;
     private long expiresAt;
 }
