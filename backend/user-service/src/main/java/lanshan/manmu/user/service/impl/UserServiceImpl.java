@@ -79,25 +79,30 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.BAD_REQUEST, "password 不能为空");
         }
 
-        // 2. 唯一性检查（应用层快速失败；并发竞态由 DB 部分唯一索引兜底）
-        if (userMapper.selectOne(new LambdaQueryWrapper<User>()
-                .eq(User::getUsername, req.getUsername())) != null) {
-            log.warn("register 用户名已存在: username={}", req.getUsername());
-            throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
+        // 2. 唯一性检查（单次 OR 查询，减少 RTT；并发竞态由 DB 部分唯一索引兜底）
+        boolean hasPhone = req.getPhone() != null && !req.getPhone().isEmpty();
+        boolean hasEmail = req.getEmail() != null && !req.getEmail().isEmpty();
+        LambdaQueryWrapper<User> qw = new LambdaQueryWrapper<>();
+        qw.eq(User::getUsername, req.getUsername());
+        if (hasPhone) {
+            qw.or().eq(User::getPhone, req.getPhone());
         }
-        if (req.getPhone() != null && !req.getPhone().isEmpty()) {
-            if (userMapper.selectOne(new LambdaQueryWrapper<User>()
-                    .eq(User::getPhone, req.getPhone())) != null) {
+        if (hasEmail) {
+            qw.or().eq(User::getEmail, req.getEmail());
+        }
+        List<User> existing = userMapper.selectList(qw);
+        if (!existing.isEmpty()) {
+            User conflict = existing.get(0);
+            if (conflict.getUsername().equals(req.getUsername())) {
+                log.warn("register 用户名已存在: username={}", req.getUsername());
+                throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
+            }
+            if (hasPhone && req.getPhone().equals(conflict.getPhone())) {
                 log.warn("register 手机号已注册: phone={}", req.getPhone());
                 throw new BizException(ErrorCode.USER_PHONE_EXISTS);
             }
-        }
-        if (req.getEmail() != null && !req.getEmail().isEmpty()) {
-            if (userMapper.selectOne(new LambdaQueryWrapper<User>()
-                    .eq(User::getEmail, req.getEmail())) != null) {
-                log.warn("register 邮箱已注册: email={}", req.getEmail());
-                throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
-            }
+            log.warn("register 邮箱已注册: email={}", req.getEmail());
+            throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
         }
 
         // 3. Snowflake ID
