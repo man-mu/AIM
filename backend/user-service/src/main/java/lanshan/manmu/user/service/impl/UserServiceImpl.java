@@ -1,7 +1,6 @@
 package lanshan.manmu.user.service.impl;
 
 import cn.hutool.jwt.JWT;
-import cn.hutool.jwt.JWTUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -22,23 +21,32 @@ import lanshan.manmu.user.mapper.UserMapper;
 import lanshan.manmu.user.model.entity.User;
 import lanshan.manmu.user.model.entity.UserDevice;
 import lanshan.manmu.user.service.UserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 用户服务核心实现：BCrypt 密码哈希 + JWT 签发 + Redis 会话管理 + MyBatis-Plus CRUD。
+ * 用户服务核心实现：BCrypt 密码哈希 + JWT 签发 + Redis 黑名单 + MyBatis-Plus CRUD。
+ * <p>JWT 校验流程：Hutool {@code JWT.of(token).setKey(secret).verify()} 签名校验 + exp/nbf/iat 过期校验
+ * + Redis 黑名单（{@code revoked_token:{jti}}）吊销校验。
+ * <p>注册唯一性：应用层查重快速失败 + DB 部分唯一索引兜底（见 {@code aim-schema.sql}）。
  */
 @Service
 public class UserServiceImpl implements UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserServiceImpl.class);
 
     private final UserMapper userMapper;
     private final UserDeviceMapper deviceMapper;
     private final SnowflakeIdWorker snowflake;
     private final StringRedisTemplate redisTemplate;
     private final PasswordEncoder passwordEncoder;
-    private final String jwtSecret;
+    private final byte[] jwtSecretBytes;
     private final long jwtExpireSec;
     private final long jwtRefreshSec;
 
@@ -56,7 +64,7 @@ public class UserServiceImpl implements UserService {
         this.snowflake = snowflake;
         this.redisTemplate = redisTemplate;
         this.passwordEncoder = passwordEncoder;
-        this.jwtSecret = jwtSecret;
+        this.jwtSecretBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
         this.jwtExpireSec = jwtExpireSec;
         this.jwtRefreshSec = jwtRefreshSec;
     }
@@ -64,6 +72,7 @@ public class UserServiceImpl implements UserService {
     // ==================== 认证 ====================
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public RegisterResp register(RegisterReq req) {
         // 1. 参数校验
         if (req.getUsername() == null || req.getUsername().isEmpty()) {
@@ -73,7 +82,7 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.BAD_REQUEST, "password 不能为空");
         }
 
-        // 2. 唯一性检查
+        // 2. 唯一性检查（应用层快速失败；并发竞态由 DB 部分唯一索引兜底）
         if (userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, req.getUsername())) != null) {
             throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
@@ -114,16 +123,20 @@ public class UserServiceImpl implements UserService {
         user.setCreatedAt(now);
         user.setUpdatedAt(now);
 
-        // 6. 持久化
-        userMapper.insert(user);
+        // 6. 持久化（并发竞态下由 DB 唯一索引抛 DuplicateKeyException）
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            log.warn("register 竞态唯一键冲突: userId={}, username={}, msg={}", userId, req.getUsername(), e.getMessage());
+            throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
+        }
 
         // 7. JWT 双 Token
         TokenPair tokens = generateTokenPair(userId, req.getUsername());
 
-        // 8. 设备记录 + Redis 会话
+        // 8. 设备记录
         if (req.getDeviceId() != null && !req.getDeviceId().isEmpty()) {
             saveDevice(userId, req.getDeviceId(), req.getPlatform());
-            saveSession(userId, req.getDeviceId(), tokens.getAccessToken());
         }
 
         // 9. 响应
@@ -163,10 +176,9 @@ public class UserServiceImpl implements UserService {
         // JWT 双 Token
         TokenPair tokens = generateTokenPair(user.getId(), user.getUsername());
 
-        // 设备记录 + Redis 会话
+        // 设备记录
         if (req.getDeviceId() != null && !req.getDeviceId().isEmpty()) {
             saveDevice(user.getId(), req.getDeviceId(), req.getPlatform());
-            saveSession(user.getId(), req.getDeviceId(), tokens.getAccessToken());
         }
 
         LoginResp resp = new LoginResp();
@@ -178,39 +190,41 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void logout(long userId, String tokenId) {
-        try {
-            JWT jwt = JWTUtil.parseToken(tokenId);
-            jwt.setKey(jwtSecret.getBytes(StandardCharsets.UTF_8));
-
-            String jti = String.valueOf(jwt.getPayload("jti"));
-            long expiresAt = extractExpiration(jwt);
-
-            long now = System.currentTimeMillis();
-            if (expiresAt <= now) {
-                return;
-            }
-            long ttl = (expiresAt - now) / 1000;
-            redisTemplate.opsForValue().set("revoked_token:" + jti, "1", Duration.ofSeconds(ttl));
-        } catch (Exception e) {
-            // Token 无效，无需吊销
+        JWT jwt = parseAndVerify(tokenId);
+        if (jwt == null) {
+            return;
         }
+        String jti = jwt.getPayload("jti") == null ? null : String.valueOf(jwt.getPayload("jti"));
+        if (jti == null || jti.isEmpty() || "null".equals(jti)) {
+            return;
+        }
+        long expiresAt = extractExpiration(jwt);
+        long now = System.currentTimeMillis();
+        long ttl = (expiresAt - now) / 1000;
+        if (ttl <= 0) {
+            return;
+        }
+        redisTemplate.opsForValue().set("revoked_token:" + jti, "1", Duration.ofSeconds(ttl));
     }
 
     @Override
     public ValidateTokenResp validateToken(String accessToken) {
-        if (accessToken == null || accessToken.isEmpty()) {
+        JWT jwt = parseAndVerify(accessToken);
+        if (jwt == null) {
             return invalidTokenResp();
         }
+
+        // Redis 黑名单校验
+        Object jtiObj = jwt.getPayload("jti");
+        String jti = jtiObj == null ? null : String.valueOf(jtiObj);
+        if (jti == null || jti.isEmpty() || "null".equals(jti)) {
+            return invalidTokenResp();
+        }
+        if (Boolean.TRUE.equals(redisTemplate.hasKey("revoked_token:" + jti))) {
+            return invalidTokenResp();
+        }
+
         try {
-            JWT jwt = JWTUtil.parseToken(accessToken);
-            jwt.setKey(jwtSecret.getBytes(StandardCharsets.UTF_8));
-
-            // Redis 黑名单校验
-            String jti = String.valueOf(jwt.getPayload("jti"));
-            if (Boolean.TRUE.equals(redisTemplate.hasKey("revoked_token:" + jti))) {
-                return invalidTokenResp();
-            }
-
             long userId = Long.parseLong(String.valueOf(jwt.getPayload("userId")));
             long expiresAt = extractExpiration(jwt);
 
@@ -220,6 +234,7 @@ public class UserServiceImpl implements UserService {
             resp.setExpiresAt(expiresAt);
             return resp;
         } catch (Exception e) {
+            log.warn("validateToken 解析 userId 失败: {}", e.getMessage());
             return invalidTokenResp();
         }
     }
@@ -245,26 +260,40 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public UserInfo updateProfile(long userId, UpdateProfileReq req) {
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
 
-        // 密码变更
-        if (req.getOldPassword() != null && req.getNewPassword() != null) {
-            updatePassword(userId, req.getOldPassword(), req.getNewPassword());
-        }
-
-        // 逐字段更新非 null 值
+        // 逐字段更新非 null 值；phone/email 变更需查重
         UpdateWrapper<User> wrapper = new UpdateWrapper<>();
         wrapper.eq("id", userId);
         if (req.getAvatar() != null) wrapper.set("avatar", req.getAvatar());
         if (req.getGender() != null) wrapper.set("gender", req.getGender());
         if (req.getBio() != null) wrapper.set("bio", req.getBio());
         if (req.getBirthday() != null) wrapper.set("birthday", req.getBirthday());
-        if (req.getPhone() != null) wrapper.set("phone", req.getPhone());
-        if (req.getEmail() != null) wrapper.set("email", req.getEmail());
+
+        if (req.getPhone() != null && !req.getPhone().isEmpty()
+                && !req.getPhone().equals(user.getPhone())) {
+            Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                    .eq(User::getPhone, req.getPhone()));
+            if (cnt != null && cnt > 0) {
+                throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+            }
+            wrapper.set("phone", req.getPhone());
+        }
+        if (req.getEmail() != null && !req.getEmail().isEmpty()
+                && !req.getEmail().equals(user.getEmail())) {
+            Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                    .eq(User::getEmail, req.getEmail()));
+            if (cnt != null && cnt > 0) {
+                throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+            }
+            wrapper.set("email", req.getEmail());
+        }
+
         wrapper.set("updated_at", LocalDateTime.now());
         userMapper.update(null, wrapper);
 
@@ -317,7 +346,6 @@ public class UserServiceImpl implements UserService {
         long now = System.currentTimeMillis();
         long accessExpireAt = now + jwtExpireSec * 1000;
         long refreshExpireAt = now + jwtRefreshSec * 1000;
-        byte[] key = jwtSecret.getBytes(StandardCharsets.UTF_8);
 
         String accessToken = JWT.create()
                 .setJWTId(UUID.randomUUID().toString())
@@ -326,7 +354,7 @@ public class UserServiceImpl implements UserService {
                 .setIssuer("aim")
                 .setIssuedAt(new Date(now))
                 .setExpiresAt(new Date(accessExpireAt))
-                .setKey(key)
+                .setKey(jwtSecretBytes)
                 .sign();
 
         String refreshToken = JWT.create()
@@ -336,7 +364,7 @@ public class UserServiceImpl implements UserService {
                 .setIssuer("aim")
                 .setIssuedAt(new Date(now))
                 .setExpiresAt(new Date(refreshExpireAt))
-                .setKey(key)
+                .setKey(jwtSecretBytes)
                 .sign();
 
         TokenPair pair = new TokenPair();
@@ -376,11 +404,20 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 保存 Redis 会话缓存。
+     * 解析并校验 JWT：① 签名校验 ② 过期校验。失败一律返回 null。
      */
-    private void saveSession(long userId, String deviceId, String accessToken) {
-        String key = String.format("session:%d:%s", userId, deviceId);
-        redisTemplate.opsForValue().set(key, accessToken, Duration.ofSeconds(jwtExpireSec));
+    private JWT parseAndVerify(String token) {
+        if (token == null || token.isEmpty()) return null;
+        try {
+            JWT jwt = JWT.of(token).setKey(jwtSecretBytes);
+            if (!jwt.verify()) {
+                return null;
+            }
+            jwt.validate(0);
+            return jwt;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
