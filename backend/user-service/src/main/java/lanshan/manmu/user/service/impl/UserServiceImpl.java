@@ -7,8 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.OffsetDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
@@ -107,7 +106,7 @@ public class UserServiceImpl implements UserService {
         String passwordHash = passwordEncoder.encode(req.getPassword());
 
         // 5. 构建实体
-        LocalDateTime now = LocalDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now();
         User user = new User();
         user.setId(userId);
         user.setUsername(req.getUsername());
@@ -296,7 +295,7 @@ public class UserServiceImpl implements UserService {
             wrapper.set("email", req.getEmail());
         }
 
-        wrapper.set("updated_at", LocalDateTime.now());
+        wrapper.set("updated_at", OffsetDateTime.now());
         userMapper.update(null, wrapper);
 
         return getUserInfo(userId);
@@ -315,7 +314,7 @@ public class UserServiceImpl implements UserService {
         UpdateWrapper<User> wrapper = new UpdateWrapper<>();
         wrapper.eq("id", userId)
                 .set("password_hash", passwordEncoder.encode(newPwd))
-                .set("updated_at", LocalDateTime.now());
+                .set("updated_at", OffsetDateTime.now());
         userMapper.update(null, wrapper);
     }
 
@@ -323,7 +322,7 @@ public class UserServiceImpl implements UserService {
     public SearchUsersResp searchUsers(String keyword, int pageNum, int pageSize) {
         Page<User> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>()
-                .like(User::getUsername, keyword);
+                .like(User::getUsername, escapeLike(keyword));
         userMapper.selectPage(page, wrapper);
 
         List<UserInfo> users = page.getRecords().stream().map(this::toUserInfo).toList();
@@ -341,6 +340,17 @@ public class UserServiceImpl implements UserService {
     }
 
     // ==================== 内部工具方法 ====================
+
+    /**
+     * 转义 LIKE 通配符（\、%、_），防止搜索词被当作通配符误匹配。
+     * PG 9.1+ 默认 LIKE 反斜杠转义生效。
+     */
+    private String escapeLike(String keyword) {
+        if (keyword == null) return "";
+        return keyword.replace("\\", "\\\\")
+                       .replace("%", "\\%")
+                       .replace("_", "\\_");
+    }
 
     /**
      * 生成 JWT 双 Token（Access + Refresh）。
@@ -386,7 +396,7 @@ public class UserServiceImpl implements UserService {
                 new LambdaQueryWrapper<UserDevice>()
                         .eq(UserDevice::getUserId, userId)
                         .eq(UserDevice::getDeviceId, deviceId));
-        LocalDateTime now = LocalDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now();
         if (existing != null) {
             existing.setLastActiveAt(now);
             if (platform != null) existing.setPlatform(platform);
@@ -462,15 +472,15 @@ public class UserServiceImpl implements UserService {
         info.setBirthday(user.getBirthday() != null ? user.getBirthday() : 0L);
         info.setCreatedAt(toEpochMillis(user.getCreatedAt()));
         info.setUpdatedAt(toEpochMillis(user.getUpdatedAt()));
-        info.setBalance(user.getBalance() != null ? user.getBalance().doubleValue() : 0.0);
+        info.setBalance(user.getBalance() != null ? user.getBalance() : BigDecimal.ZERO);
         return info;
     }
 
     /**
-     * LocalDateTime → epoch millis。
+     * OffsetDateTime → epoch millis。
      */
-    private long toEpochMillis(LocalDateTime ldt) {
-        if (ldt == null) return 0L;
-        return ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    private long toEpochMillis(OffsetDateTime odt) {
+        if (odt == null) return 0L;
+        return odt.toInstant().toEpochMilli();
     }
 }

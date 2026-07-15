@@ -2,7 +2,7 @@ package lanshan.manmu.user.model.entity;
 
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -24,6 +24,6 @@ public class UserDevice {
     private String pushToken;
     private String ip;
     private String location;
-    private LocalDateTime lastActiveAt;
-    private LocalDateTime createdAt;
+    private OffsetDateTime lastActiveAt;
+    private OffsetDateTime createdAt;
 }
