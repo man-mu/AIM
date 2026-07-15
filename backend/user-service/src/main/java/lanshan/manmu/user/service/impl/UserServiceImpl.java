@@ -20,8 +20,7 @@ import lanshan.manmu.user.mapper.UserMapper;
 import lanshan.manmu.user.model.entity.User;
 import lanshan.manmu.user.model.entity.UserDevice;
 import lanshan.manmu.user.service.UserService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -36,9 +35,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>注册唯一性：应用层查重快速失败 + DB 部分唯一索引兜底（见 {@code aim-schema.sql}）。
  */
 @Service
+@Slf4j
 public class UserServiceImpl implements UserService {
-
-    private static final Logger log = LoggerFactory.getLogger(UserServiceImpl.class);
 
     private final UserMapper userMapper;
     private final UserDeviceMapper deviceMapper;
@@ -84,17 +82,20 @@ public class UserServiceImpl implements UserService {
         // 2. 唯一性检查（应用层快速失败；并发竞态由 DB 部分唯一索引兜底）
         if (userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, req.getUsername())) != null) {
+            log.warn("register 用户名已存在: username={}", req.getUsername());
             throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
         }
         if (req.getPhone() != null && !req.getPhone().isEmpty()) {
             if (userMapper.selectOne(new LambdaQueryWrapper<User>()
                     .eq(User::getPhone, req.getPhone())) != null) {
+                log.warn("register 手机号已注册: phone={}", req.getPhone());
                 throw new BizException(ErrorCode.USER_PHONE_EXISTS);
             }
         }
         if (req.getEmail() != null && !req.getEmail().isEmpty()) {
             if (userMapper.selectOne(new LambdaQueryWrapper<User>()
                     .eq(User::getEmail, req.getEmail())) != null) {
+                log.warn("register 邮箱已注册: email={}", req.getEmail());
                 throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
             }
         }
@@ -139,6 +140,7 @@ public class UserServiceImpl implements UserService {
         }
 
         // 9. 响应
+        log.info("register 成功: userId={}, username={}", userId, req.getUsername());
         RegisterResp resp = new RegisterResp();
         resp.setUserId(userId);
         resp.setTokens(tokens);
@@ -164,11 +166,13 @@ public class UserServiceImpl implements UserService {
                     .eq(User::getEmail, req.getAccount()));
         }
         if (user == null) {
+            log.warn("login 用户不存在: account={}", req.getAccount());
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
 
         // 密码校验
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
+            log.warn("login 密码错误: userId={}", user.getId());
             throw new BizException(ErrorCode.USER_PASSWORD_ERROR);
         }
 
@@ -180,6 +184,7 @@ public class UserServiceImpl implements UserService {
             saveDevice(user.getId(), req.getDeviceId(), req.getPlatform());
         }
 
+        log.info("login 成功: userId={}", user.getId());
         LoginResp resp = new LoginResp();
         resp.setUserId(user.getId());
         resp.setTokens(tokens);
@@ -281,6 +286,7 @@ public class UserServiceImpl implements UserService {
             Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
                     .eq(User::getPhone, req.getPhone()));
             if (cnt != null && cnt > 0) {
+                log.warn("updateProfile 手机号已被占用: userId={}, phone={}", userId, req.getPhone());
                 throw new BizException(ErrorCode.USER_PHONE_EXISTS);
             }
             wrapper.set("phone", req.getPhone());
@@ -290,6 +296,7 @@ public class UserServiceImpl implements UserService {
             Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
                     .eq(User::getEmail, req.getEmail()));
             if (cnt != null && cnt > 0) {
+                log.warn("updateProfile 邮箱已被占用: userId={}, email={}", userId, req.getEmail());
                 throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
             }
             wrapper.set("email", req.getEmail());
@@ -309,6 +316,7 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
         if (!passwordEncoder.matches(oldPwd, user.getPasswordHash())) {
+            log.warn("updatePassword 旧密码错误: userId={}", userId);
             throw new BizException(ErrorCode.USER_PASSWORD_ERROR);
         }
         UpdateWrapper<User> wrapper = new UpdateWrapper<>();
