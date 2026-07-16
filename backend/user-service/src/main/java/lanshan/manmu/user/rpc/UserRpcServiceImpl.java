@@ -38,6 +38,11 @@ public class UserRpcServiceImpl implements UserRpcService {
     }
 
     @Override
+    public RefreshTokenResp refreshToken(RefreshTokenReq req) {
+        return userService.refreshToken(req.getRefreshToken());
+    }
+
+    @Override
     public UserInfo getUserInfo(GetUserInfoReq req) {
         return userService.getUserInfo(req.getUserId());
     }

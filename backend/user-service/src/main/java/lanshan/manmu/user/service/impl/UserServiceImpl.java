@@ -219,6 +219,45 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    public RefreshTokenResp refreshToken(String refreshToken) {
+        JWT jwt = parseAndVerify(refreshToken);
+        if (jwt == null) {
+            log.warn("refreshToken 验签或过期校验失败");
+            throw new BizException(ErrorCode.USER_TOKEN_INVALID);
+        }
+
+        // 必须 type=refresh，防止 accessToken 被当 refreshToken 用
+        Object typeObj = jwt.getPayload("type");
+        String type = typeObj == null ? null : String.valueOf(typeObj);
+        if (!"refresh".equals(type)) {
+            log.warn("refreshToken 类型错误: type={}", type);
+            throw new BizException(ErrorCode.USER_TOKEN_INVALID);
+        }
+
+        // Redis 黑名单校验
+        Object jtiObj = jwt.getPayload("jti");
+        String jti = jtiObj == null ? null : String.valueOf(jtiObj);
+        if (jti == null || jti.isEmpty() || "null".equals(jti)
+                || Boolean.TRUE.equals(redisTemplate.hasKey("revoked_token:" + jti))) {
+            log.warn("refreshToken 已被吊销或缺 jti");
+            throw new BizException(ErrorCode.USER_TOKEN_INVALID);
+        }
+
+        // 签发新 accessToken（refreshToken 不变，长效复用）
+        try {
+            long userId = Long.parseLong(String.valueOf(jwt.getPayload("userId")));
+            String username = String.valueOf(jwt.getPayload("username"));
+            String accessToken = generateAccessToken(userId, username);
+
+            log.info("refreshToken 成功: userId={}", userId);
+            return new RefreshTokenResp(accessToken, System.currentTimeMillis() + jwtExpireSec * 1000);
+        } catch (Exception e) {
+            log.warn("refreshToken 解析 userId/username 失败: {}", e.getMessage());
+            throw new BizException(ErrorCode.USER_TOKEN_INVALID);
+        }
+    }
+
+    @Override
     public ValidateTokenResp validateToken(String accessToken) {
         JWT jwt = parseAndVerify(accessToken);
         if (jwt == null) {
@@ -373,15 +412,7 @@ public class UserServiceImpl implements UserService {
         long accessExpireAt = now + jwtExpireSec * 1000;
         long refreshExpireAt = now + jwtRefreshSec * 1000;
 
-        String accessToken = JWT.create()
-                .setJWTId(UUID.randomUUID().toString())
-                .setPayload("userId", userId)
-                .setPayload("username", username)
-                .setIssuer("aim")
-                .setIssuedAt(new Date(now))
-                .setExpiresAt(new Date(accessExpireAt))
-                .setKey(jwtSecretBytes)
-                .sign();
+        String accessToken = generateAccessToken(userId, username, now, accessExpireAt);
 
         String refreshToken = JWT.create()
                 .setJWTId(UUID.randomUUID().toString())
@@ -399,6 +430,27 @@ public class UserServiceImpl implements UserService {
         pair.setAccessExpire(accessExpireAt);
         pair.setRefreshExpire(refreshExpireAt);
         return pair;
+    }
+
+    /**
+     * 生成 accessToken（用于 refresh 时单发新 accessToken）。
+     * 默认签发时刻取当前时间，过期时间 = now + jwtExpireSec。
+     */
+    private String generateAccessToken(long userId, String username) {
+        long now = System.currentTimeMillis();
+        return generateAccessToken(userId, username, now, now + jwtExpireSec * 1000);
+    }
+
+    private String generateAccessToken(long userId, String username, long now, long expireAt) {
+        return JWT.create()
+                .setJWTId(UUID.randomUUID().toString())
+                .setPayload("userId", userId)
+                .setPayload("username", username)
+                .setIssuer("aim")
+                .setIssuedAt(new Date(now))
+                .setExpiresAt(new Date(expireAt))
+                .setKey(jwtSecretBytes)
+                .sign();
     }
 
     /**

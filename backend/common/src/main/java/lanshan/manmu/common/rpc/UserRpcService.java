@@ -12,6 +12,7 @@ public interface UserRpcService {
     LoginResp login(LoginReq req);
     void logout(LogoutReq req);
     ValidateTokenResp validateToken(ValidateTokenReq req);
+    RefreshTokenResp refreshToken(RefreshTokenReq req);
 
     // —— 资料 ——
     UserInfo getUserInfo(GetUserInfoReq req);

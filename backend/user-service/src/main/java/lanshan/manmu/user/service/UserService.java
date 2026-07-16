@@ -12,6 +12,7 @@ public interface UserService {
     LoginResp login(LoginReq req);
     void logout(long userId, String tokenId);
     ValidateTokenResp validateToken(String accessToken);
+    RefreshTokenResp refreshToken(String refreshToken);
 
     UserInfo getUserInfo(long userId);
     BatchGetUserInfoResp batchGetUserInfo(List<Long> userIds);
