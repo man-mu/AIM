@@ -233,6 +233,7 @@ public class FileServiceImpl implements FileService {
     /**
      * 查询单个文件信息。
      * Phase 1 访问控制：只校验文件存在 + CONFIRMED，不校验请求者身份。
+     * @param userId Phase 2 预留，接入 ConvRpcService.isMember() 做会话级权限校验
      */
     @Override
     public FileInfo getFileInfo(long fileId, long userId) {
@@ -249,6 +250,7 @@ public class FileServiceImpl implements FileService {
     /**
      * 批量查询文件信息。
      * 只返回 status=CONFIRMED 的文件，跳过 PENDING/DELETED。
+     * @param userId Phase 2 预留，接入 ConvRpcService.isMember() 做会话级权限校验
      */
     @Override
     public List<FileInfo> batchGetFileInfo(List<Long> fileIds, long userId) {
@@ -268,6 +270,7 @@ public class FileServiceImpl implements FileService {
      * 删除文件（软删除 DB + best-effort 删除 MinIO 对象）。
      *
      * 访问控制：仅 uploader 可删。
+     * 设计意图：PENDING 文件可被 uploader 删除，视为"取消上传"。
      *
      * 异常场景：
      *   - fileId 不存在 → FILE_NOT_FOUND
