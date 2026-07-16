@@ -274,10 +274,17 @@ CREATE TABLE IF NOT EXISTS file.files (
     access      SMALLINT     NOT NULL DEFAULT 0,
     uploader_id BIGINT       NOT NULL DEFAULT 0,
     bucket      VARCHAR(128) NOT NULL DEFAULT 'aim',
+    status      SMALLINT     NOT NULL DEFAULT 0,    -- 0=PENDING 1=CONFIRMED 2=DELETED
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_files_uploader ON file.files(uploader_id);
 CREATE INDEX IF NOT EXISTS idx_files_key ON file.files(key);
+-- 兼容已有库：补充 status 字段（PG 9.6+ 支持 ADD COLUMN IF NOT EXISTS）
+ALTER TABLE file.files ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 0;
+-- zombie 清理查询用：WHERE status=0 AND created_at < xxx
+CREATE INDEX IF NOT EXISTS idx_files_status_created
+    ON file.files(status, created_at)
+    WHERE status = 0;
 
 -- ============================================================
 -- 6. notify schema — signaling-service
