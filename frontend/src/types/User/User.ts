@@ -5,17 +5,26 @@ export type Tokens = {
     refreshExpire: number
 }
 export type UserInfo = {
-    id: Number,
-    username: String,
-    phone: Number,
-    email: String,
-    avatar: String,
+    id: number,
+    username: string,
+    phone: number,
+    email: string,
+    avatar: string,
     gender: Gender,
-    bio: String,
-    birthday: String,
-    createdAt: Number,
-    updatedAt: Number,
-    balance: Number
+    bio: string,
+    birthday: string,
+    createdAt: number,
+    updatedAt: number,
+    balance: number
 }
-
 export type Gender = 0 | 1 | 2
+// GET /users/me
+export type ProfileData = UserInfo
+// PUT /users/me
+export interface UpdateParams {
+    avatar: string,
+    gender: Gender,
+    bio: string,
+    birthday: number
+}
+export type UpdateData = UserInfo
