@@ -172,7 +172,7 @@ public class UserServiceImpl implements UserService {
         }
         if (user == null) {
             log.warn("login 用户不存在: account={}", req.getAccount());
-            throw new BizException(ErrorCode.USER_NOT_FOUND);
+            throw new BizException(ErrorCode.USER_PASSWORD_ERROR);
         }
 
         // 密码校验
@@ -279,6 +279,14 @@ public class UserServiceImpl implements UserService {
     public ValidateTokenResp validateToken(String accessToken) {
         JWT jwt = parseAndVerify(accessToken);
         if (jwt == null) {
+            return invalidTokenResp();
+        }
+
+        // 类型校验：只接受 accessToken，防止 refreshToken 被当 accessToken 滥用
+        Object typeObj = jwt.getPayload("type");
+        String type = typeObj == null ? null : String.valueOf(typeObj);
+        if (!"access".equals(type)) {
+            log.warn("validateToken 类型错误: type={}", type);
             return invalidTokenResp();
         }
 
@@ -464,6 +472,7 @@ public class UserServiceImpl implements UserService {
                 .setJWTId(UUID.randomUUID().toString())
                 .setPayload("userId", userId)
                 .setPayload("username", username)
+                .setPayload("type", "access")
                 .setIssuer("aim")
                 .setIssuedAt(new Date(now))
                 .setExpiresAt(new Date(expireAt))
