@@ -1,12 +1,4 @@
-# 兜底配置：Nacos 不可达时的本地 fallback
-# 特定环境的配置写在 application-{profile}.yml 中
+# 兜底配置：仅在 Nacos 不可达时让应用能独立启动
+# 所有业务配置（数据源、Redis、JWT、Dubbo 等）均在 Nacos 配置中心管理
 server:
   port: ${SERVER_PORT:8081}
-
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
-
-aim:
-  snowflake:
-    worker-id: 0
