@@ -5,20 +5,18 @@ spring:
     name: user-service
   cloud:
     nacos:
+      # 公共连接属性，config / discovery 模块自动继承
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      # 注意 group 不能放公共层（discovery 默认 DEFAULT_GROUP，config 才用 AIM_GROUP）
       config:
-        server-addr: ${NACOS_ADDR:localhost:8848}
-        namespace: ${NACOS_NAMESPACE:dev}
         group: ${NACOS_GROUP:AIM_GROUP}
-        username: ${NACOS_USERNAME:nacos}
-        password: ${NACOS_PASSWORD:nacos}
         file-extension: yml
         shared-configs:
           - data-id: application.yml
             group: COMMON_GROUP
             refresh: true
       discovery:
-        server-addr: ${NACOS_ADDR:localhost:8848}
-        namespace: ${NACOS_NAMESPACE:dev}
         group: ${NACOS_GROUP:AIM_GROUP}
-        username: ${NACOS_USERNAME:nacos}
-        password: ${NACOS_PASSWORD:nacos}
