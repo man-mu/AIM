@@ -18,6 +18,7 @@ public interface UserRpcService {
     UserInfo getUserInfo(GetUserInfoReq req);
     BatchGetUserInfoResp batchGetUserInfo(BatchGetUserInfoReq req);
     UserInfo updateProfile(UpdateProfileReq req);
+    void updatePassword(UpdatePasswordReq req);
     SearchUsersResp searchUsers(SearchUsersReq req);
     ListAllUserIdsResp listAllUserIds();
 }

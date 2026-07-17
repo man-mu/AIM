@@ -1,0 +1,18 @@
+package lanshan.manmu.common.rpc.dto.user;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/**
+ * 修改密码请求（独立 RPC，与 updateProfile 解耦）。
+ */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class UpdatePasswordReq {
+
+    private long userId;
+    private String oldPassword;
+    private String newPassword;
+}

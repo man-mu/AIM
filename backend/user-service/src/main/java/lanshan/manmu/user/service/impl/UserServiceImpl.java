@@ -344,6 +344,14 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public BatchGetUserInfoResp batchGetUserInfo(List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            BatchGetUserInfoResp resp = new BatchGetUserInfoResp();
+            resp.setUsers(List.of());
+            return resp;
+        }
+        if (userIds.size() > 500) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "单次最多查询 500 个用户");
+        }
         List<User> users = userMapper.selectBatchIds(userIds);
         List<UserInfo> infos = users.stream().map(this::toUserInfo).toList();
         BatchGetUserInfoResp resp = new BatchGetUserInfoResp();
@@ -359,7 +367,20 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
 
-        // 逐字段更新非 null 值；phone/email 变更需查重
+        // 字段值校验
+        if (req.getGender() != null && (req.getGender() < 0 || req.getGender() > 2)) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "gender 取值需 0/1/2");
+        }
+        if (req.getBirthday() != null && req.getBirthday() < 0) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "birthday 不能为负数");
+        }
+        if (req.getBio() != null && req.getBio().length() > 500) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "bio 长度不能超过 500");
+        }
+        if (req.getAvatar() != null && req.getAvatar().length() > 512) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "avatar 长度不能超过 512");
+        }
+
         UpdateWrapper<User> wrapper = new UpdateWrapper<>();
         wrapper.eq("id", userId);
         if (req.getAvatar() != null) wrapper.set("avatar", req.getAvatar());
@@ -367,23 +388,26 @@ public class UserServiceImpl implements UserService {
         if (req.getBio() != null) wrapper.set("bio", req.getBio());
         if (req.getBirthday() != null) wrapper.set("birthday", req.getBirthday());
 
-        if (req.getPhone() != null && !req.getPhone().isEmpty()
-                && !req.getPhone().equals(user.getPhone())) {
-            Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
-                    .eq(User::getPhone, req.getPhone()));
-            if (cnt != null && cnt > 0) {
-                log.warn("updateProfile 手机号已被占用: userId={}, phone={}", userId, req.getPhone());
-                throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+        // phone/email：传入 null 跳过更新；传入非空值且与当前值不同则查重+更新；传入空串=清空
+        if (req.getPhone() != null && !req.getPhone().equals(user.getPhone())) {
+            if (!req.getPhone().isEmpty()) {
+                Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                        .eq(User::getPhone, req.getPhone()));
+                if (cnt != null && cnt > 0) {
+                    log.warn("updateProfile 手机号已被占用: userId={}, phone={}", userId, req.getPhone());
+                    throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+                }
             }
             wrapper.set("phone", req.getPhone());
         }
-        if (req.getEmail() != null && !req.getEmail().isEmpty()
-                && !req.getEmail().equals(user.getEmail())) {
-            Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
-                    .eq(User::getEmail, req.getEmail()));
-            if (cnt != null && cnt > 0) {
-                log.warn("updateProfile 邮箱已被占用: userId={}, email={}", userId, req.getEmail());
-                throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+        if (req.getEmail() != null && !req.getEmail().equals(user.getEmail())) {
+            if (!req.getEmail().isEmpty()) {
+                Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                        .eq(User::getEmail, req.getEmail()));
+                if (cnt != null && cnt > 0) {
+                    log.warn("updateProfile 邮箱已被占用: userId={}, email={}", userId, req.getEmail());
+                    throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+                }
             }
             wrapper.set("email", req.getEmail());
         }
@@ -426,12 +450,22 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public SearchUsersResp searchUsers(String keyword, int pageNum, int pageSize) {
+        if (pageNum < 1) pageNum = 1;
+        if (pageSize < 1) pageSize = 10;
+        if (pageSize > 100) pageSize = 100;
         Page<User> page = new Page<>(pageNum, pageSize);
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>()
-                .like(User::getUsername, escapeLike(keyword));
+                .like(User::getUsername, escapeLike(keyword))
+                .orderByAsc(User::getId);
         userMapper.selectPage(page, wrapper);
 
-        List<UserInfo> users = page.getRecords().stream().map(this::toUserInfo).toList();
+        // 隐私保护：搜索他人时 phone/email 脱敏，避免泄露他人手机号邮箱
+        List<UserInfo> users = page.getRecords().stream().map(u -> {
+            UserInfo info = toUserInfo(u);
+            info.setPhone(maskPhone(info.getPhone()));
+            info.setEmail(maskEmail(info.getEmail()));
+            return info;
+        }).toList();
         SearchUsersResp resp = new SearchUsersResp();
         resp.setUsers(users);
         resp.setTotal(page.getTotal());
@@ -457,6 +491,21 @@ public class UserServiceImpl implements UserService {
         return keyword.replace("\\", "\\\\")
                        .replace("%", "\\%")
                        .replace("_", "\\_");
+    }
+
+    /** 手机号脱敏：保留前 3 后 4，中间 4 位打码。空串原样返回。 */
+    private String maskPhone(String phone) {
+        if (phone == null || phone.isEmpty()) return phone;
+        if (phone.length() <= 7) return phone;
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
+    }
+
+    /** 邮箱脱敏：@ 前保留前 1 字符，其余打码。空串原样返回。 */
+    private String maskEmail(String email) {
+        if (email == null || email.isEmpty()) return email;
+        int at = email.indexOf('@');
+        if (at <= 1) return email;
+        return email.charAt(0) + "****" + email.substring(at);
     }
 
     /**
@@ -552,9 +601,6 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
-     * 解析并校验 JWT：① 签名校验 ② 过期校验。失败一律返回 null。
-     */
-    /**
      * 密码强度校验：长度 6~32，必须同时含字母和数字。
      */
     private void validatePasswordStrength(String password) {
@@ -571,6 +617,9 @@ public class UserServiceImpl implements UserService {
         }
     }
 
+    /**
+     * 解析并校验 JWT：① 签名校验 ② 过期校验。失败一律返回 null。
+     */
     private JWT parseAndVerify(String token) {
         if (token == null || token.isEmpty()) return null;
         try {

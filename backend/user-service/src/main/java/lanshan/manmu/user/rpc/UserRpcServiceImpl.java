@@ -58,6 +58,11 @@ public class UserRpcServiceImpl implements UserRpcService {
     }
 
     @Override
+    public void updatePassword(UpdatePasswordReq req) {
+        userService.updatePassword(req.getUserId(), req.getOldPassword(), req.getNewPassword());
+    }
+
+    @Override
     public SearchUsersResp searchUsers(SearchUsersReq req) {
         return userService.searchUsers(req.getKeyword(), req.getPageNum(), req.getPageSize());
     }
