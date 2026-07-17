@@ -17,8 +17,6 @@ public class UpdateProfileReq {
     private Integer gender;
     private String bio;
     private Long birthday;
-    private String oldPassword;
-    private String newPassword;
     private String phone;
     private String email;
 }

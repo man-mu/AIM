@@ -78,6 +78,7 @@ public class UserServiceImpl implements UserService {
         if (req.getPassword() == null || req.getPassword().isEmpty()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "password 不能为空");
         }
+        validatePasswordStrength(req.getPassword());
 
         // 2. 唯一性检查（单次 OR 查询，减少 RTT；并发竞态由 DB 部分唯一索引兜底）
         boolean hasPhone = req.getPhone() != null && !req.getPhone().isEmpty();
@@ -92,17 +93,32 @@ public class UserServiceImpl implements UserService {
         }
         List<User> existing = userMapper.selectList(qw);
         if (!existing.isEmpty()) {
-            User conflict = existing.get(0);
-            if (conflict.getUsername().equals(req.getUsername())) {
-                log.warn("register 用户名已存在: username={}", req.getUsername());
-                throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
+            // 遍历所有匹配记录逐字段判定，避免只取首条漏判真实冲突类型
+            for (User conflict : existing) {
+                if (conflict.getUsername().equals(req.getUsername())) {
+                    log.warn("register 用户名已存在: username={}", req.getUsername());
+                    throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
+                }
             }
-            if (hasPhone && req.getPhone().equals(conflict.getPhone())) {
-                log.warn("register 手机号已注册: phone={}", req.getPhone());
-                throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+            if (hasPhone) {
+                for (User conflict : existing) {
+                    if (req.getPhone().equals(conflict.getPhone())) {
+                        log.warn("register 手机号已注册: phone={}", req.getPhone());
+                        throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+                    }
+                }
             }
-            log.warn("register 邮箱已注册: email={}", req.getEmail());
-            throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+            if (hasEmail) {
+                for (User conflict : existing) {
+                    if (req.getEmail().equals(conflict.getEmail())) {
+                        log.warn("register 邮箱已注册: email={}", req.getEmail());
+                        throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+                    }
+                }
+            }
+            // 兜底（理论不可达，OR 查询的每条匹配必命中上述三个字段之一）
+            log.warn("register OR 查询命中但未识别冲突字段: username={}", req.getUsername());
+            throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
         }
 
         // 3. Snowflake ID
@@ -373,7 +389,18 @@ public class UserServiceImpl implements UserService {
         }
 
         wrapper.set("updated_at", OffsetDateTime.now());
-        userMapper.update(null, wrapper);
+        try {
+            userMapper.update(null, wrapper);
+        } catch (DuplicateKeyException e) {
+            // 应用层查重漏网（并发竞态），DB 唯一索引兜底
+            log.warn("updateProfile DB 唯一键冲突: userId={}", userId);
+            Long phoneCnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
+                    .eq(User::getPhone, req.getPhone()).ne(User::getId, userId));
+            if (phoneCnt != null && phoneCnt > 0) {
+                throw new BizException(ErrorCode.USER_PHONE_EXISTS);
+            }
+            throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
+        }
 
         return getUserInfo(userId);
     }
@@ -381,6 +408,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updatePassword(long userId, String oldPwd, String newPwd) {
+        validatePasswordStrength(newPwd);
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
@@ -411,6 +439,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    // TODO: 待 signaling-service 接入时改为游标分页或 Redis 缓存，百万级数据会有 OOM 风险
     public List<Long> listAllUserIds() {
         List<User> users = userMapper.selectList(
                 new LambdaQueryWrapper<User>().select(User::getId));
@@ -493,24 +522,55 @@ public class UserServiceImpl implements UserService {
             existing.setLastActiveAt(now);
             if (platform != null) existing.setPlatform(platform);
             deviceMapper.updateById(existing);
-        } else {
-            UserDevice device = new UserDevice();
-            device.setId(snowflake.nextId());
-            device.setUserId(userId);
-            device.setDeviceId(deviceId);
-            device.setPlatform(platform != null ? platform : "web");
-            device.setPushToken("");
-            device.setIp("");
-            device.setLocation("");
-            device.setLastActiveAt(now);
-            device.setCreatedAt(now);
+            return;
+        }
+        UserDevice device = new UserDevice();
+        device.setId(snowflake.nextId());
+        device.setUserId(userId);
+        device.setDeviceId(deviceId);
+        device.setPlatform(platform != null ? platform : "web");
+        device.setPushToken("");
+        device.setIp("");
+        device.setLocation("");
+        device.setLastActiveAt(now);
+        device.setCreatedAt(now);
+        try {
             deviceMapper.insert(device);
+        } catch (DuplicateKeyException e) {
+            // 并发竞态：两个请求同时 select 返回 null，第二个 insert 撞 (user_id, device_id) 唯一索引
+            log.info("saveDevice 竞态冲突,降级为 update: userId={}, deviceId={}", userId, deviceId);
+            UserDevice conflict = deviceMapper.selectOne(
+                    new LambdaQueryWrapper<UserDevice>()
+                            .eq(UserDevice::getUserId, userId)
+                            .eq(UserDevice::getDeviceId, deviceId));
+            if (conflict != null) {
+                conflict.setLastActiveAt(now);
+                if (platform != null) conflict.setPlatform(platform);
+                deviceMapper.updateById(conflict);
+            }
         }
     }
 
     /**
      * 解析并校验 JWT：① 签名校验 ② 过期校验。失败一律返回 null。
      */
+    /**
+     * 密码强度校验：长度 6~32，必须同时含字母和数字。
+     */
+    private void validatePasswordStrength(String password) {
+        if (password == null || password.length() < 6 || password.length() > 32) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "密码长度需 6~32 位");
+        }
+        boolean hasLetter = false, hasDigit = false;
+        for (char c : password.toCharArray()) {
+            if (Character.isLetter(c)) hasLetter = true;
+            else if (Character.isDigit(c)) hasDigit = true;
+        }
+        if (!hasLetter || !hasDigit) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "密码必须同时含字母和数字");
+        }
+    }
+
     private JWT parseAndVerify(String token) {
         if (token == null || token.isEmpty()) return null;
         try {
