@@ -103,7 +103,7 @@ public class UserServiceImpl implements UserService {
             if (hasPhone) {
                 for (User conflict : existing) {
                     if (req.getPhone().equals(conflict.getPhone())) {
-                        log.warn("register 手机号已注册: phone={}", req.getPhone());
+                        log.warn("register 手机号已注册: phone={}", maskPhone(req.getPhone()));
                         throw new BizException(ErrorCode.USER_PHONE_EXISTS);
                     }
                 }
@@ -111,7 +111,7 @@ public class UserServiceImpl implements UserService {
             if (hasEmail) {
                 for (User conflict : existing) {
                     if (req.getEmail().equals(conflict.getEmail())) {
-                        log.warn("register 邮箱已注册: email={}", req.getEmail());
+                        log.warn("register 邮箱已注册: email={}", maskEmail(req.getEmail()));
                         throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
                     }
                 }
@@ -394,7 +394,7 @@ public class UserServiceImpl implements UserService {
                 Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
                         .eq(User::getPhone, req.getPhone()));
                 if (cnt != null && cnt > 0) {
-                    log.warn("updateProfile 手机号已被占用: userId={}, phone={}", userId, req.getPhone());
+                    log.warn("updateProfile 手机号已被占用: userId={}, phone={}", userId, maskPhone(req.getPhone()));
                     throw new BizException(ErrorCode.USER_PHONE_EXISTS);
                 }
             }
@@ -405,7 +405,7 @@ public class UserServiceImpl implements UserService {
                 Long cnt = userMapper.selectCount(new LambdaQueryWrapper<User>()
                         .eq(User::getEmail, req.getEmail()));
                 if (cnt != null && cnt > 0) {
-                    log.warn("updateProfile 邮箱已被占用: userId={}, email={}", userId, req.getEmail());
+                    log.warn("updateProfile 邮箱已被占用: userId={}, email={}", userId, maskEmail(req.getEmail()));
                     throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
                 }
             }
