@@ -1,7 +1,9 @@
 #!/bin/bash
 # AIM 数据库初始化脚本 (幂等)
 # 用途：非首次初始化时手动执行，创建 nacos/aim 库并导入 schema
-# 用法: bash docs/sql/init-aim.sh
+# 用法: bash docs/sql/init/init-aim.sh
+#
+# schema 文件位于 ../auto/schemas/（docker-compose 自动挂载后仅供 entrypoint script 引用）
 #
 # 自动检测运行环境：
 #   - 宿主机有 psql    → 直连 localhost:5432
@@ -9,6 +11,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCHEMA_DIR="${SCRIPT_DIR}/../auto/schemas"
 PG_USER="${POSTGRES_USER:-postgres}"
 PG_CONTAINER="aim-postgres"
 
@@ -65,12 +68,12 @@ create_db_if_absent aim
 
 # 3. 导入 nacos schema (CREATE TABLE IF NOT EXISTS，幂等)
 echo "[3/4] 导入 nacos-schema.sql ..."
-import_sql nacos "${SCRIPT_DIR}/nacos-schema.sql"
+import_sql nacos "${SCHEMA_DIR}/nacos-schema.sql"
 echo "  → nacos 表导入完成"
 
 # 4. 导入 aim schema (CREATE SCHEMA/TABLE IF NOT EXISTS，幂等)
 echo "[4/4] 导入 aim-schema.sql ..."
-import_sql aim "${SCRIPT_DIR}/aim-schema.sql"
+import_sql aim "${SCHEMA_DIR}/aim-schema.sql"
 echo "  → aim schema 导入完成"
 
 echo ""

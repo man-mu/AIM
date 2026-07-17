@@ -10,8 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - aim-pgdata:/var/lib/postgresql/data
-      - ./docs/sql/init:/docker-entrypoint-initdb.d
-      - ./docs/sql:/aim-sql
+      - ./docs/sql/auto:/docker-entrypoint-initdb.d
 
   redis:
     image: redis:7.4
@@ -58,10 +57,11 @@ services:
       NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-aim-server}
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-aim-security}
     ports:
+      - "8080:8080"
       - "8848:8848"
       - "9848:9848"
     volumes:
-      - ./docs/sql/nacos-pg.properties:/home/nacos/conf/application.properties
+      - ./docs/sql/auto/nacos-pg.properties:/home/nacos/conf/application.properties
 
   minio:
     image: minio/minio

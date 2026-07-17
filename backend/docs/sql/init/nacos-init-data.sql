@@ -1,6 +1,6 @@
 -- Nacos 配置中心初始化数据
 -- 用法：Nacos 首次健康启动后执行
---   psql -h localhost -U postgres -d nacos -f docs/sql/nacos-init-data.sql
+--   psql -h localhost -U postgres -d nacos -f docs/sql/init/nacos-init-data.sql
 --   docker compose restart nacos
 --
 -- 幂等：已存在的行自动跳过
