@@ -29,7 +29,7 @@ public class UserRpcServiceImpl implements UserRpcService {
 
     @Override
     public void logout(LogoutReq req) {
-        userService.logout(req.getUserId(), req.getTokenId());
+        userService.logout(req.getAccessToken(), req.getRefreshToken());
     }
 
     @Override

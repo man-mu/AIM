@@ -10,7 +10,7 @@ public interface UserService {
 
     RegisterResp register(RegisterReq req);
     LoginResp login(LoginReq req);
-    void logout(long userId, String tokenId);
+    void logout(String accessToken, String refreshToken);
     ValidateTokenResp validateToken(String accessToken);
     RefreshTokenResp refreshToken(String refreshToken);
 

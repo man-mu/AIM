@@ -198,24 +198,42 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public void logout(long userId, String tokenId) {
-        JWT jwt = parseAndVerify(tokenId);
-        if (jwt == null) {
-            log.info("logout 忽略无效 token: userId={}", userId);
-            return;
+    public void logout(String accessToken, String refreshToken) {
+        boolean accessRevoked = revokeIfValid(accessToken, "access");
+        boolean refreshRevoked = revokeIfValid(refreshToken, "refresh");
+        if (!accessRevoked && !refreshRevoked) {
+            log.info("logout 未吊销任何有效 token");
         }
-        String jti = jwt.getPayload("jti") == null ? null : String.valueOf(jwt.getPayload("jti"));
+    }
+
+    /**
+     * 若 token 有效且未过期，将其 jti 加入 Redis 黑名单。
+     * @return true 表示已加入黑名单；false 表示 token 无效/过期/缺 jti
+     */
+    private boolean revokeIfValid(String token, String kind) {
+        if (token == null || token.isEmpty()) {
+            return false;
+        }
+        JWT jwt = parseAndVerify(token);
+        if (jwt == null) {
+            log.info("logout 忽略无效 {} token", kind);
+            return false;
+        }
+        Object jtiObj = jwt.getPayload("jti");
+        String jti = jtiObj == null ? null : String.valueOf(jtiObj);
         if (jti == null || jti.isEmpty() || "null".equals(jti)) {
-            log.info("logout token 缺少 jti: userId={}", userId);
-            return;
+            log.info("logout {} token 缺少 jti", kind);
+            return false;
         }
         long expiresAt = extractExpiration(jwt);
         long now = System.currentTimeMillis();
         long ttl = (expiresAt - now) / 1000;
         if (ttl <= 0) {
-            return;
+            return false;
         }
         redisTemplate.opsForValue().set("revoked_token:" + jti, "1", Duration.ofSeconds(ttl));
+        log.info("logout 已吊销 {} token jti={}", kind, jti);
+        return true;
     }
 
     @Override
