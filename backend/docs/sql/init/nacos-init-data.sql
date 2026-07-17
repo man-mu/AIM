@@ -8,6 +8,19 @@
 BEGIN;
 
 -- ============================================================
+-- 0. 管理员用户
+--    Nacos v3 PG 模式不自动创建默认 admin；BCrypt hash 对应明文 nacos
+--    如需修改密码：自备 bcrypt hash 替换下方字面量，或登入后通过控制台修改
+-- ============================================================
+INSERT INTO users (username, password, enabled)
+SELECT 'nacos', '$2y$10$9GvPSQcSA8j4rvzPcoQY/O/MBQ477eIfUEogiaRr/E5eYp63iB6y.', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM users WHERE username='nacos');
+
+INSERT INTO roles (username, role)
+SELECT 'nacos', 'ROLE_ADMIN'
+WHERE NOT EXISTS (SELECT 1 FROM roles WHERE username='nacos' AND role='ROLE_ADMIN');
+
+-- ============================================================
 -- 1. namespace: dev / test / prod
 -- ============================================================
 INSERT INTO tenant_info (kp, tenant_id, tenant_name, tenant_desc, create_source, gmt_create, gmt_modified)

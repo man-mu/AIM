@@ -11,14 +11,25 @@ services:
     volumes:
       - aim-pgdata:/var/lib/postgresql/data
       - ./docs/sql/auto:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - aim-net
 
   redis:
     image: redis:7.4
     container_name: aim-redis
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
     volumes:
       - aim-redis-data:/data
+    networks:
+      - aim-net
 
   kafka:
     image: apache/kafka:3.9.0
@@ -26,9 +37,9 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://localhost:9092}
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -43,16 +54,21 @@ services:
       - aim-kafka-data:/var/lib/kafka/data
       - aim-kafka-secrets:/etc/kafka/secrets
       - aim-kafka-config:/mnt/shared/config
+    networks:
+      - aim-net
 
   nacos:
     image: nacos/nacos-server:v3.2.2
     container_name: aim-nacos
     depends_on:
       postgres:
-        condition: service_started
+        condition: service_healthy
     environment:
       MODE: standalone
       SPRING_DATASOURCE_PLATFORM: postgresql
+      # 覆盖 nacos-pg.properties 中的 ${POSTGRES_USER} / ${POSTGRES_PASSWORD} 占位符
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:-YWltLW5hY29zLXNrZWxldG9uLWF1dGgtc2VjcmV0LWtleS0yMDI2LTAxMjM0NTY3ODk=}
       NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:-aim-server}
       NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:-aim-security}
@@ -62,6 +78,8 @@ services:
       - "9848:9848"
     volumes:
       - ./docs/sql/auto/nacos-pg.properties:/home/nacos/conf/application.properties
+    networks:
+      - aim-net
 
   minio:
     image: minio/minio
@@ -75,6 +93,8 @@ services:
       - "9001:9001"
     volumes:
       - aim-minio-data:/data
+    networks:
+      - aim-net
 
 volumes:
   aim-pgdata:
@@ -83,3 +103,8 @@ volumes:
   aim-kafka-secrets:
   aim-kafka-config:
   aim-minio-data:
+
+networks:
+  aim-net:
+    name: aim-net
+    driver: bridge
