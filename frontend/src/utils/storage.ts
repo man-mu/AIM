@@ -1,6 +1,7 @@
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 const ACCESS_EXPIRE_KEY = 'access_expire';
+const REFRESH_EXPIRE_KEY = 'refresh_expire';
 
 export const storage = {
     // 访问令牌
@@ -15,10 +16,14 @@ export const storage = {
     getAccessExpire: () => Number(localStorage.getItem(ACCESS_EXPIRE_KEY)),
     setAccessExpire: (time: number) => localStorage.setItem(ACCESS_EXPIRE_KEY, String(time)),
     removeAccessExpire: () => localStorage.removeItem(ACCESS_EXPIRE_KEY),
+    getRefreshExpire: () => Number(localStorage.getItem(REFRESH_EXPIRE_KEY)),
+    setRefreshExpire: (time: number) => localStorage.setItem(REFRESH_EXPIRE_KEY, String(time)),
+    removeRefreshExpire: () => localStorage.removeItem(REFRESH_EXPIRE_KEY),
     // 快捷清空所有认证信息
     clearAuth: () => {
         localStorage.removeItem(ACCESS_TOKEN_KEY);
         localStorage.removeItem(REFRESH_TOKEN_KEY);
         localStorage.removeItem(ACCESS_EXPIRE_KEY);
+        localStorage.removeItem(REFRESH_EXPIRE_KEY);
     },
 }

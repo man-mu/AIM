@@ -1,3 +1,5 @@
+export type Int64 = string | number
+
 export type Tokens = {
     accessToken: string,
     refreshToken: string,
@@ -5,14 +7,14 @@ export type Tokens = {
     refreshExpire: number
 }
 export type UserInfo = {
-    id: number,
+    id: Int64,
     username: string,
-    phone: number,
+    phone: string | number,
     email: string,
     avatar: string,
     gender: Gender,
     bio: string,
-    birthday: string,
+    birthday: number | string,
     createdAt: number,
     updatedAt: number,
     balance: number

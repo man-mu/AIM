@@ -21,6 +21,6 @@ export const request = <T>(
         if (code !== 0) {
             throw new Error(message);
         }
-        return data;
+        return (data ?? undefined) as T;
     });
 }

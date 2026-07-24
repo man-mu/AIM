@@ -1,0 +1,18 @@
+@import "tailwindcss";/* 针对 Chrome、Edge、Safari 等所有 WebKit 内核浏览器 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+    /* 1. 用巨大内阴影彻底盖住背景（必须要有 !important） */
+    -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+
+    /* 2. 设置文字颜色 */
+    -webkit-text-fill-color: #333333 !important;
+
+    /* 3. 🚀 关键步骤：设置超长过渡时间，强制浏览器“冻结”背景色 */
+    /*    这样在聚焦时，浏览器会认为过渡还没结束，不会重新渲染蓝/黄底 */
+    transition: background-color 5000s ease-in-out 0s !important;
+
+    /* 4. 确保光标颜色正常 */
+    caret-color: #333333 !important;
+}

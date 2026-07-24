@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { storage } from '@/utils/storage';
+import { hasValidAuthSession } from '@/utils/authSession';
 import type { UserInfo } from '@/types/User/User.ts';
 
 interface AuthState {
@@ -9,11 +9,10 @@ interface AuthState {
     clearAuth: () => void;
     hydrate: () => void;
 }
-
 export const useAuthStore = create<AuthState>((set) => ({
-    isLogin: !!storage.getAccessToken(),
+    isLogin: hasValidAuthSession(),
     user: null,
     setAuth: (user) => set({ isLogin: true, user }),
     clearAuth: () => set({ isLogin: false, user: null }),
-    hydrate: () => set({ isLogin: !!storage.getAccessToken() }),
+    hydrate: () => set({ isLogin: hasValidAuthSession() }),
 }));
