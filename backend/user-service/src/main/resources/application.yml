@@ -1,4 +1,27 @@
-# 兜底配置：仅在 Nacos 不可达时让应用能独立启动
-# 所有业务配置（数据源、Redis、JWT、Dubbo 等）均在 Nacos 配置中心管理
+# application.yml
+# 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
+# 业务配置（数据源、Redis、JWT、Dubbo 等）全部在 Nacos 配置中心对应 namespace 的 user-service.yml DataId 下
+spring:
+  application:
+    name: user-service
+  cloud:
+    nacos:
+      # 公共连接属性，config / discovery 模块自动继承
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      # group 不能放公共层（discovery 默认 DEFAULT_GROUP，config 才用 AIM_GROUP）
+      config:
+        group: ${NACOS_GROUP:AIM_GROUP}
+        file-extension: yml
+      discovery:
+        group: ${NACOS_GROUP:AIM_GROUP}
+  config:
+    import:
+      # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
+      - optional:nacos:user-service.yml
+      - optional:nacos:application.yml?group=COMMON_GROUP
+
 server:
   port: ${SERVER_PORT:8081}
