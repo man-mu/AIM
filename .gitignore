@@ -22,3 +22,4 @@ logs/
 
 # 环境配置 (保留 .env.example)
 .env
+.worktrees/
