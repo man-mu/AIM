@@ -46,17 +46,33 @@ export const useRegister = () => {
   });
 };
 
-export const useLogout = () => {
+function useClearLocalSession() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const clearAuth = useAuthStore((state) => state.clearAuth);
 
-  const clearLocalSession = () => {
+  return () => {
     queryClient.clear();
     storage.clearAuth();
     clearAuth();
     navigate('/login', { replace: true });
   };
+}
+
+export const useLocalLogout = () => {
+  const clearLocalSession = useClearLocalSession();
+
+  return useMutation({
+    mutationFn: async () => undefined,
+    onSuccess: () => {
+      clearLocalSession();
+      alert('\u5df2\u9000\u51fa\u767b\u5f55');
+    },
+  });
+};
+
+export const useLogout = () => {
+  const clearLocalSession = useClearLocalSession();
 
   return useMutation({
     mutationFn: (params: LogoutParams) => authApi.logout(params),

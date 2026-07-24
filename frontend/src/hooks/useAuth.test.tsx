@@ -15,7 +15,7 @@ const authApiMock = vi.hoisted(() => ({
 
 vi.mock('@/apis/auth.ts', () => ({ authApi: authApiMock }));
 
-import { useLogin, useRegister } from './useAuth';
+import { useLocalLogout, useLogin, useRegister } from './useAuth';
 
 const authData: LoginData = {
   userId: '1234567890123456789',
@@ -63,6 +63,7 @@ describe('authentication mutations', () => {
     localStorage.clear();
     authApiMock.login.mockReset();
     authApiMock.register.mockReset();
+    authApiMock.logout.mockReset();
     useAuthStore.setState({ isLogin: false, user: null });
   });
 
@@ -113,5 +114,33 @@ describe('authentication mutations', () => {
     ).rejects.toThrow('用户名已存在');
 
     expect(alertSpy).toHaveBeenCalledWith('用户名已存在');
+  });
+  it('clears local session state and returns to login without calling the API', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const Wrapper = ({ children }: PropsWithChildren) => (
+      <MemoryRouter initialEntries={['/home']}>
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <LocationProbe />
+      </MemoryRouter>
+    );
+
+    storage.setAccessToken('access-token');
+    storage.setRefreshToken('refresh-token');
+    storage.setAccessExpire(Date.now() + 60_000);
+    storage.setRefreshExpire(Date.now() + 60_000);
+    queryClient.setQueryData(['user'], authData.user);
+    useAuthStore.setState({ isLogin: true, user: authData.user });
+
+    const { result } = renderHook(() => useLocalLogout(), { wrapper: Wrapper });
+    await result.current.mutateAsync();
+
+    await waitFor(() => expect(document.querySelector('[data-testid="location"]')).toHaveTextContent('/login'));
+    expect(storage.getAccessToken()).toBeNull();
+    expect(storage.getRefreshToken()).toBeNull();
+    expect(queryClient.getQueryData(['user'])).toBeUndefined();
+    expect(useAuthStore.getState()).toMatchObject({ isLogin: false, user: null });
+    expect(authApiMock.logout).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('\u5df2\u9000\u51fa\u767b\u5f55');
   });
 });
