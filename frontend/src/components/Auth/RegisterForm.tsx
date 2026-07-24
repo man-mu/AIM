@@ -20,6 +20,7 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
 
   return (
     <Form
+      className="auth-form"
       form={form}
       onFinish={onSubmit}
       name="registerForm"

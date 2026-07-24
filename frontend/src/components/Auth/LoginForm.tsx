@@ -14,7 +14,7 @@ interface LoginFormProps {
 
 export default function LoginForm({ onSubmit, loading = false }: LoginFormProps) {
   return (
-    <Form onFinish={onSubmit} name="loginForm" autoComplete="on" size="large" layout="vertical">
+    <Form className="auth-form" onFinish={onSubmit} name="loginForm" autoComplete="on" size="large" layout="vertical">
       <Form.Item name="account" label="账号" rules={[{ required: true, message: '请输入账号' }]}>
         <Input
           autoComplete="username"

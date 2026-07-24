@@ -18,7 +18,7 @@ export default function Login() {
     };
 
     return (
-        <AuthLayout title="AIM">
+        <AuthLayout title={'\u767b\u5f55'}>
             <LoginForm
                 onSubmit={handleSubmit}
                 loading={loginMutation.isPending}

@@ -1,18 +1,117 @@
-@import "tailwindcss";/* 针对 Chrome、Edge、Safari 等所有 WebKit 内核浏览器 */
+@import "tailwindcss";
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  color: #1d1d1f;
+  background: #f5f5f7;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: #f5f5f7;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.auth-page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: #f5f5f7;
+}
+
+.auth-brand {
+  position: fixed;
+  top: 24px;
+  left: 28px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.auth-panel {
+  width: min(100%, 400px);
+  padding: 32px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+}
+
+.auth-eyebrow {
+  margin: 0 0 8px;
+  color: #6e6e73;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-panel h1 {
+  margin: 0 0 28px;
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.auth-form .ant-form-item-label > label {
+  color: #424245;
+  font-size: 14px;
+}
+
+.auth-form .ant-input,
+.auth-form .ant-input-affix-wrapper {
+  min-height: 44px;
+  border-color: rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.auth-form .ant-input:focus,
+.auth-form .ant-input-affix-wrapper-focused {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16);
+}
+
+.auth-form .ant-btn-primary {
+  min-height: 44px;
+  border-radius: 8px;
+  background: #0071e3;
+  box-shadow: none;
+}
+
+.auth-form .ant-btn-primary:hover {
+  background: #0077ed !important;
+}
+
+.auth-form a {
+  color: #0071e3;
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
-    /* 1. 用巨大内阴影彻底盖住背景（必须要有 !important） */
-    -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+  -webkit-text-fill-color: #1d1d1f !important;
+  transition: background-color 5000s ease-in-out 0s !important;
+  caret-color: #1d1d1f !important;
+}
 
-    /* 2. 设置文字颜色 */
-    -webkit-text-fill-color: #333333 !important;
+@media (max-width: 480px) {
+  .auth-page {
+    align-items: start;
+    padding: 104px 16px 16px;
+  }
 
-    /* 3. 🚀 关键步骤：设置超长过渡时间，强制浏览器“冻结”背景色 */
-    /*    这样在聚焦时，浏览器会认为过渡还没结束，不会重新渲染蓝/黄底 */
-    transition: background-color 5000s ease-in-out 0s !important;
+  .auth-brand {
+    top: 20px;
+    left: 20px;
+  }
 
-    /* 4. 确保光标颜色正常 */
-    caret-color: #333333 !important;
+  .auth-panel {
+    padding: 24px;
+  }
 }
