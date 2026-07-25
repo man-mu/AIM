@@ -1,5 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { ChatPanel } from './components/ChatPanel';
+import { ConversationDetailPanel } from './components/ConversationDetailPanel';
+import { ConversationList } from './components/ConversationList';
 import {
   LocalConversationProvider,
   useLocalConversation,
@@ -53,6 +56,23 @@ function renderWorkspace() {
   return render(
     <LocalConversationProvider>
       <ConversationWorkspaceProbe />
+    </LocalConversationProvider>,
+  );
+}
+
+function MobileChatOpenProbe() {
+  const { isMobileChatOpen } = useLocalConversation();
+
+  return <p data-testid="mobile-chat-open">{String(isMobileChatOpen)}</p>;
+}
+
+function renderConversationWorkspace() {
+  return render(
+    <LocalConversationProvider>
+      <ConversationList />
+      <ChatPanel />
+      <ConversationDetailPanel />
+      <MobileChatOpenProbe />
     </LocalConversationProvider>,
   );
 }
@@ -127,6 +147,67 @@ describe('LocalConversationProvider', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a' }));
     fireEvent.click(screen.getByRole('button', { name: '\u8fd4\u56de\u5217\u8868' }));
+
+    expect(screen.getByTestId('mobile-chat-open')).toHaveTextContent('false');
+  });
+});
+
+describe('Conversation workspace components', () => {
+  it('selects the book club, clears its unread badge, and updates its detail panel', () => {
+    renderConversationWorkspace();
+
+    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
+
+    expect(
+      within(screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55')).getByText('\u6b22\u8fce\u52a0\u5165\u672c\u5468\u7684\u8bfb\u4e66\u4f1a\u3002'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('\u672a\u8bfb 2 \u6761')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '\u5468\u672b\u8bfb\u4e66\u4f1a' })).toBeInTheDocument();
+    expect(within(screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5')).getByText('3 \u4f4d\u6210\u5458')).toBeInTheDocument();
+  });
+
+  it('sends a message with Enter, updates the preview, and clears the composer', () => {
+    renderConversationWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
+
+    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
+    fireEvent.change(composer, { target: { value: '\u4eca\u665a\u89c1' } });
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+
+    expect(screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55')).toHaveTextContent('\u4eca\u665a\u89c1');
+    expect(within(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ })).getByText('\u4eca\u665a\u89c1')).toBeInTheDocument();
+    expect(composer).toHaveValue('');
+  });
+
+  it('keeps a newline in the composer when Shift+Enter is pressed', () => {
+    renderConversationWorkspace();
+
+    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
+    fireEvent.change(composer, { target: { value: '\u7b2c\u4e00\u884c\n' } });
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', shiftKey: true });
+
+    expect(composer).toHaveValue('\u7b2c\u4e00\u884c\n');
+  });
+
+  it('disables blank sends and does not add a message on form submit', () => {
+    renderConversationWorkspace();
+
+    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
+    const messageCount = messageList.querySelectorAll('li').length;
+    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
+    fireEvent.change(composer, { target: { value: '  \n  ' } });
+
+    expect(screen.getByRole('button', { name: '\u53d1\u9001\u6d88\u606f' })).toBeDisabled();
+    fireEvent.submit(composer.closest('form') as HTMLFormElement);
+
+    expect(messageList.querySelectorAll('li')).toHaveLength(messageCount);
+  });
+
+  it('returns to the conversation list from the mobile back icon', () => {
+    renderConversationWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: '\u8fd4\u56de\u4f1a\u8bdd\u5217\u8868' }));
 
     expect(screen.getByTestId('mobile-chat-open')).toHaveTextContent('false');
   });

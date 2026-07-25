@@ -19,7 +19,7 @@ export const initialConversations: ConversationSummary[] = [
     type: 'group',
     name: '\u5468\u672b\u8bfb\u4e66\u4f1a',
     avatar: '',
-    memberCount: 18,
+    memberCount: 3,
     presence: null,
     announcement: '\u6bcf\u5468\u516d\u4e0b\u5348\u5171\u8bfb\u3002',
     lastMessagePreview: '\u6b22\u8fce\u52a0\u5165\u672c\u5468\u7684\u8bfb\u4e66\u4f1a\u3002',
