@@ -23,12 +23,12 @@ export function MessageList(): React.JSX.Element {
 
         return (
           <li key={message.id} className={isOutgoing ? 'flex justify-end' : 'flex justify-start'}>
-            <article className={isOutgoing ? 'max-w-[78%] text-right' : 'max-w-[78%] text-left'}>
+            <article className={isOutgoing ? 'min-w-0 max-w-[78%] text-right' : 'min-w-0 max-w-[78%] text-left'}>
               <p
                 className={
                   isOutgoing
-                    ? 'rounded-2xl rounded-br-md bg-[#0071e3] px-3 py-2 text-sm leading-5 text-white whitespace-pre-wrap'
-                    : 'rounded-2xl rounded-bl-md bg-[#f2f2f7] px-3 py-2 text-sm leading-5 text-[#1d1d1f] whitespace-pre-wrap'
+                    ? 'min-w-0 break-words rounded-2xl rounded-br-md bg-[#0071e3] px-3 py-2 text-sm leading-5 text-white whitespace-pre-wrap'
+                    : 'min-w-0 break-words rounded-2xl rounded-bl-md bg-[#f2f2f7] px-3 py-2 text-sm leading-5 text-[#1d1d1f] whitespace-pre-wrap'
                 }
               >
                 {message.content.text}

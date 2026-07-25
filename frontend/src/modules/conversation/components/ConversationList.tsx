@@ -10,7 +10,10 @@ function formatConversationTime(timestamp: number): string {
 }
 
 function conversationInitial(conversation: ConversationSummary): string {
-  return (conversation.avatar || conversation.name).trim().slice(0, 1).toUpperCase();
+  const avatar = conversation.avatar.trim();
+  const name = conversation.name.trim();
+
+  return (avatar || name).slice(0, 1).toUpperCase() || '?';
 }
 
 export function ConversationList(): React.JSX.Element {

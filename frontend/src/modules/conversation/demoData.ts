@@ -5,7 +5,7 @@ export const initialConversations: ConversationSummary[] = [
     id: 'conv-linchuan',
     type: 'direct',
     name: '\u6797\u5ddd',
-    avatar: '',
+    avatar: '   ',
     memberCount: 2,
     presence: 'online',
     announcement: '',

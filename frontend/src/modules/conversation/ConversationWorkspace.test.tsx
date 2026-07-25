@@ -170,11 +170,21 @@ describe('Conversation workspace components', () => {
     renderConversationWorkspace();
     fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
 
+    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
+    const messageCount = messageList.querySelectorAll('article').length;
     const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
     fireEvent.change(composer, { target: { value: '\u4eca\u665a\u89c1' } });
-    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    const enterEvent = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Enter',
+      key: 'Enter',
+    });
+    fireEvent(composer, enterEvent);
 
-    expect(screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55')).toHaveTextContent('\u4eca\u665a\u89c1');
+    expect(enterEvent.defaultPrevented).toBe(true);
+    expect(messageList.querySelectorAll('article')).toHaveLength(messageCount + 1);
+    expect(within(messageList).getAllByText('\u4eca\u665a\u89c1')).toHaveLength(1);
     expect(within(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ })).getByText('\u4eca\u665a\u89c1')).toBeInTheDocument();
     expect(composer).toHaveValue('');
   });
@@ -182,11 +192,46 @@ describe('Conversation workspace components', () => {
   it('keeps a newline in the composer when Shift+Enter is pressed', () => {
     renderConversationWorkspace();
 
+    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
+    const messageCount = messageList.querySelectorAll('article').length;
     const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
+    fireEvent.change(composer, { target: { value: '\u7b2c\u4e00\u884c' } });
+    const shiftEnterEvent = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      code: 'Enter',
+      key: 'Enter',
+      shiftKey: true,
+    });
+    fireEvent(composer, shiftEnterEvent);
+    expect(shiftEnterEvent.defaultPrevented).toBe(false);
     fireEvent.change(composer, { target: { value: '\u7b2c\u4e00\u884c\n' } });
-    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', shiftKey: true });
 
     expect(composer).toHaveValue('\u7b2c\u4e00\u884c\n');
+    expect(messageList.querySelectorAll('article')).toHaveLength(messageCount);
+  });
+
+  it('provides wrapping constraints for long message tokens and group announcements', () => {
+    renderConversationWorkspace();
+    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
+
+    const messageBubble = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55').querySelector('article > p');
+    const announcement = within(screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5')).getByText('\u6bcf\u5468\u516d\u4e0b\u5348\u5171\u8bfb\u3002');
+
+    expect(messageBubble).toHaveClass('min-w-0', 'break-words');
+    expect(announcement).toHaveClass('min-w-0', 'break-words');
+  });
+
+  it('falls back from a whitespace avatar to the conversation name initial', () => {
+    renderConversationWorkspace();
+
+    const listAvatar = screen
+      .getByLabelText('\u4f1a\u8bdd\u5217\u8868')
+      .querySelector('button[aria-current="true"] > span');
+    const detailAvatar = screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5').querySelector('div > span');
+
+    expect(listAvatar).toHaveTextContent('\u6797');
+    expect(detailAvatar).toHaveTextContent('\u6797');
   });
 
   it('disables blank sends and does not add a message on form submit', () => {
