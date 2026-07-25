@@ -83,7 +83,7 @@ export function LocalConversationProvider({ children }: { children: ReactNode })
           id: localId,
           clientMsgId: localId,
           conversationId: activeConversation.id,
-          seq: localId,
+          seq: null,
           senderId: 'local-user',
           senderName: '\u6211',
           direction: 'outgoing',

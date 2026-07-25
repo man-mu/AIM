@@ -18,7 +18,7 @@ export interface TextMessage {
   id: string;
   clientMsgId: string;
   conversationId: string;
-  seq: string;
+  seq: string | null;
   senderId: string;
   senderName: string;
   direction: 'incoming' | 'outgoing';
