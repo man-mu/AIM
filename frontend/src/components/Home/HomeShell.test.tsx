@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { UserInfo } from '@/types/User/User';
 import HomeShell from './HomeShell';
@@ -38,9 +38,15 @@ describe('HomeShell', () => {
       />,
     );
 
-    expect(screen.getByText('\u4f1a\u8bdd\u5217\u8868')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '\u6797\u5ddd' })).toBeInTheDocument();
-    expect(screen.getByText('\u4f1a\u8bdd\u8be6\u60c5')).toBeInTheDocument();
+    const sidebar = within(screen.getByTestId('home-sidebar'));
+    const chatPanel = within(screen.getByTestId('home-chat-panel'));
+    const detailPanel = within(screen.getByTestId('home-detail-panel'));
+
+    expect(sidebar.getByText('\u4f1a\u8bdd\u5217\u8868')).toBeInTheDocument();
+    expect(chatPanel.getByRole('heading', { name: '\u6797\u5ddd' })).toBeInTheDocument();
+    expect(detailPanel.getByText('\u4f1a\u8bdd\u8be6\u60c5')).toBeInTheDocument();
+    expect(sidebar.queryByText('\u6797\u5ddd')).not.toBeInTheDocument();
+    expect(sidebar.queryByText('\u4f1a\u8bdd\u8be6\u60c5')).not.toBeInTheDocument();
     expect(screen.getByText('zhangsan')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' }));
