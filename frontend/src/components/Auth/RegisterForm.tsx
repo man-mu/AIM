@@ -7,8 +7,8 @@ import {
   PhoneOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Button, Form, Input } from 'antd';
-import { useState } from 'react';
+import { Button, Form, Input, Tooltip, type InputRef } from 'antd';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 
 export interface RegisterFormValues {
@@ -32,6 +32,46 @@ const stepLabels = ['\u8d26\u6237\u4fe1\u606f', '\u8054\u7cfb\u65b9\u5f0f'];
 export default function RegisterForm({ onSubmit, loading = false }: RegisterFormProps) {
   const [form] = Form.useForm<RegisterFormValues>();
   const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+  const supportsResizeObserver = typeof ResizeObserver !== 'undefined';
+  const contentPanelRef = useRef<HTMLDivElement>(null);
+  const usernameInputRef = useRef<InputRef>(null);
+  const phoneInputRef = useRef<InputRef>(null);
+  const hasMountedRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const panel = contentPanelRef.current;
+    if (!panel) {
+      return undefined;
+    }
+
+    if (!supportsResizeObserver) {
+      return undefined;
+    }
+
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(panel.getBoundingClientRect().height);
+      if (nextHeight > 0) {
+        setContentHeight(nextHeight);
+      }
+    };
+
+    updateHeight();
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [currentStep, supportsResizeObserver]);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) {
+      hasMountedRef.current = true;
+      return;
+    }
+
+    const input = currentStep === 0 ? usernameInputRef.current : phoneInputRef.current;
+    input?.focus();
+  }, [currentStep]);
 
   const goToContactStep = async () => {
     try {
@@ -48,11 +88,11 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
 
   return (
     <Form
-      className="auth-form"
+      className="auth-form register-form"
       form={form}
       name="registerForm"
       autoComplete="on"
-      size="large"
+      size="middle"
       layout="vertical"
       onFinish={handleSubmit}
     >
@@ -83,8 +123,13 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
         })}
       </ol>
 
-      {currentStep === 0 ? (
-        <>
+      <div
+        className="register-stepper__content"
+        style={supportsResizeObserver && contentHeight !== null ? { height: contentHeight } : undefined}
+      >
+        <div key={currentStep} ref={contentPanelRef} className="register-stepper__panel">
+          {currentStep === 0 ? (
+            <>
           <Form.Item
             name="username"
             label={'\u7528\u6237\u540d'}
@@ -95,6 +140,7 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
             ]}
           >
             <Input
+              ref={usernameInputRef}
               autoComplete="username"
               prefix={<UserOutlined />}
               placeholder={'\u7528\u6237\u540d\uff083-32 \u4e2a\u5b57\u7b26\uff09'}
@@ -151,15 +197,30 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
               {'\u4e0b\u4e00\u6b65'}
             </Button>
           </Form.Item>
-        </>
-      ) : (
-        <>
+            </>
+          ) : (
+            <>
+          <div className="register-stepper__back-row">
+            <Tooltip title={'\u8fd4\u56de\u8d26\u6237\u4fe1\u606f'}>
+              <Button
+                className="register-stepper__back"
+                type="text"
+                shape="circle"
+                aria-label={'\u4e0a\u4e00\u6b65'}
+                icon={<ArrowLeftOutlined aria-hidden />}
+                disabled={loading}
+                onClick={() => setCurrentStep(0)}
+              />
+            </Tooltip>
+          </div>
+
           <Form.Item
             name="phone"
             label={'\u624b\u673a\u53f7'}
             rules={[{ pattern: /^1\d{10}$/, message: '\u624b\u673a\u53f7\u683c\u5f0f\u4e0d\u6b63\u786e' }]}
           >
             <Input
+              ref={phoneInputRef}
               autoComplete="tel"
               inputMode="numeric"
               prefix={<PhoneOutlined />}
@@ -179,13 +240,11 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
             />
           </Form.Item>
 
-          <Form.Item className="register-stepper__actions">
-            <Button disabled={loading} icon={<ArrowLeftOutlined aria-hidden />} onClick={() => setCurrentStep(0)}>
-              {'\u4e0a\u4e00\u6b65'}
-            </Button>
+          <Form.Item className="register-stepper__submit">
             <Button
               type="primary"
               htmlType="submit"
+              block
               loading={loading}
               icon={<ArrowRightOutlined aria-hidden />}
               iconPlacement="end"
@@ -193,8 +252,10 @@ export default function RegisterForm({ onSubmit, loading = false }: RegisterForm
               {'\u521b\u5efa\u8d26\u6237'}
             </Button>
           </Form.Item>
-        </>
-      )}
+            </>
+          )}
+        </div>
+      </div>
 
       <div className="text-center">
         {'\u5df2\u6709\u8d26\u53f7\uff1f'}<Link to="/login">{'\u7acb\u5373\u767b\u5f55'}</Link>

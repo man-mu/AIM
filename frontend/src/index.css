@@ -90,6 +90,38 @@ input {
   color: #0071e3;
 }
 
+.register-form .register-stepper__list {
+  margin-bottom: 20px;
+}
+
+.register-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.register-form .ant-form-item-label {
+  padding-bottom: 5px;
+}
+
+.register-form .ant-input-affix-wrapper {
+  min-height: 42px;
+  padding: 0 11px;
+  border-radius: 7px;
+}
+
+.register-form .ant-input-affix-wrapper .ant-input {
+  min-height: 0;
+  padding: 0 8px;
+  font-size: 15px;
+}
+
+.register-form .register-stepper__back-row {
+  margin-bottom: 8px;
+}
+
+.register-form .register-stepper__submit {
+  margin-bottom: 14px;
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus,
@@ -173,13 +205,41 @@ input:-webkit-autofill:active {
   color: #fff;
 }
 
-.register-stepper__actions {
-  display: flex;
-  gap: 12px;
+.register-stepper__content {
+  overflow: hidden;
+  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.register-stepper__actions .ant-btn {
-  flex: 1;
+.register-stepper__panel {
+  animation: register-stepper-panel-in 180ms ease-out;
+}
+
+@keyframes register-stepper-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.register-stepper__back-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: -4px 0 16px;
+}
+
+.register-stepper__back.ant-btn {
+  width: 36px;
+  height: 36px;
+  color: #424245;
+}
+
+.register-stepper__submit {
+  margin-bottom: 20px;
 }
 
 @media (max-width: 480px) {
@@ -201,7 +261,29 @@ input:-webkit-autofill:active {
     margin-bottom: 24px;
   }
 
+  .register-form .register-stepper__list {
+    margin-bottom: 18px;
+  }
+
+  .register-form .ant-form-item {
+    margin-bottom: 16px;
+  }
+
+  .register-form .ant-input-affix-wrapper {
+    min-height: 40px;
+  }
+
   .register-stepper__label {
     overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .register-stepper__content {
+    transition: none;
+  }
+
+  .register-stepper__panel {
+    animation: none;
   }
 }

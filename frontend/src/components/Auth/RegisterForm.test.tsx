@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import RegisterForm from './RegisterForm';
 
 const texts = {
@@ -30,6 +30,11 @@ beforeAll(() => {
       dispatchEvent: vi.fn(),
     })),
   });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function completeAccountStep() {
@@ -133,5 +138,82 @@ describe('RegisterForm', () => {
 
     expect(await screen.findByText('\u624b\u673a\u53f7\u683c\u5f0f\u4e0d\u6b63\u786e')).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('separates return navigation from the full-width primary submit action', async () => {
+    renderRegisterForm();
+
+    completeAccountStep();
+    await screen.findByLabelText(texts.phone);
+
+    const backButton = screen.getByRole('button', { name: texts.back });
+    expect(backButton.closest('.register-stepper__back-row')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: texts.submit })).toHaveClass('ant-btn-block');
+    expect(document.querySelector('.register-stepper__content')).toBeInTheDocument();
+  });
+
+  it('moves focus to the first contact input after advancing', async () => {
+    renderRegisterForm();
+
+    completeAccountStep();
+
+    expect(await screen.findByLabelText(texts.phone)).toHaveFocus();
+  });
+
+  it('moves focus back to the username after returning to the account step', async () => {
+    renderRegisterForm();
+
+    completeAccountStep();
+    await screen.findByLabelText(texts.phone);
+    fireEvent.click(screen.getByRole('button', { name: texts.back }));
+
+    expect(await screen.findByLabelText(texts.username)).toHaveFocus();
+  });
+
+  it('keeps natural content height when ResizeObserver is unavailable', () => {
+    vi.stubGlobal('ResizeObserver', undefined);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 280,
+      top: 0,
+      right: 400,
+      bottom: 280,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    renderRegisterForm();
+
+    expect(document.querySelector('.register-stepper__content')).not.toHaveStyle({ height: '280px' });
+  });
+
+  it('disconnects the previous height observer when the step changes', async () => {
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = observe;
+        disconnect = disconnect;
+      },
+    );
+
+    renderRegisterForm();
+    expect(observe).toHaveBeenCalledTimes(1);
+
+    completeAccountStep();
+    await screen.findByLabelText(texts.phone);
+
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(observe).toHaveBeenCalledTimes(2);
+  });
+
+  it('scopes compact field styling to the registration form', () => {
+    renderRegisterForm();
+
+    expect(document.querySelector('form')).toHaveClass('register-form');
   });
 });
