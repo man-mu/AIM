@@ -1,7 +1,7 @@
 # application.yml
 # 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
 # 业务配置全部在 Nacos 配置中心对应 namespace 的 conv-service.yml DataId 下
-# conv-service 是纯 Dubbo Provider，不对外提供 HTTP 端口
+# conv-service 同时暴露 HTTP（8082，供 gateway 转发）+ Dubbo Provider（20883，供其他业务服务 RPC 调用）
 spring:
   application:
     name: conv-service
@@ -24,3 +24,10 @@ spring:
       # 第二条拉共享公共配置
       - optional:nacos:conv-service.yml
       - optional:nacos:application.yml?group=COMMON_GROUP
+  jackson:
+    serialization:
+      write-bigdecimal-as-plain: true
+
+server:
+  port: ${SERVER_PORT:8082}
+  forward-headers-strategy: framework

@@ -6,9 +6,37 @@ spring:
     name: gateway-service
   cloud:
     nacos:
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      config:
+        group: ${NACOS_GROUP:AIM_GROUP}
+        file-extension: yml
       discovery:
-        server-addr: localhost:8848
+        group: ${NACOS_GROUP:AIM_GROUP}
     gateway:
       discovery:
         locator:
           enabled: false
+      routes:
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/auth/**, /api/v1/users/**
+        - id: conv-service
+          uri: lb://conv-service
+          predicates:
+            - Path=/api/v1/convs/**
+        - id: file-service
+          uri: lb://file-service
+          predicates:
+            - Path=/api/v1/files/**
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+aim:
+  jwt:
+    secret: ${JWT_SECRET:aim-default-jwt-secret-change-in-prod}

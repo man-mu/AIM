@@ -235,7 +235,7 @@ private String lastMessagePreview;
 </dependencies>
 ```
 
-> **不需要** `spring-boot-starter-web`（纯 Dubbo Provider，不暴露 HTTP 端口）。
+> **需要** `spring-boot-starter-web`（spec-rev: 架构 1 双协议暴露，conv-service 同时暴露 HTTP 8082 + Dubbo 20883，HTTP Controller 规范见 [controller-spec.md](./controller-spec.md)）。
 > **不需要** `spring-cloud-starter-bootstrap`（本项目用 `spring.config.import` 触发拉取，见 nacos-config-spec 第 2.3 节）。
 
 ---
@@ -248,7 +248,7 @@ private String lastMessagePreview;
 # application.yml
 # 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
 # 业务配置全部在 Nacos 配置中心对应 namespace 的 conv-service.yml DataId 下
-# conv-service 是纯 Dubbo Provider，不对外提供 HTTP 端口
+# conv-service 同时暴露 HTTP（8082，供 gateway 转发）+ Dubbo Provider（20883，供其他业务服务 RPC 调用）
 spring:
   application:
     name: conv-service
@@ -431,7 +431,7 @@ lanshan.manmu.conv/
     └── ConvConstants.java
 ```
 
-> **与 user/file-service 对齐**：实体放 `model/entity/`（不是 `entity/`），工具放 `util/`（不是 `tool/`），Service 接口与实现分离（`service/` + `service/impl/`），**无 `controller` 包**（纯 Dubbo Provider 不暴露 HTTP）。
+> **与 user/file-service 对齐**：实体放 `model/entity/`（不是 `entity/`），工具放 `util/`（不是 `tool/`），Service 接口与实现分离（`service/` + `service/impl/`）。**新增 `controller/` 包**（spec-rev: 架构 1 双协议暴露，HTTP Controller 规范见 [controller-spec.md](./controller-spec.md)）。
 
 ---
 
