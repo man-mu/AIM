@@ -2,15 +2,19 @@ import {
   BellOutlined,
   LogoutOutlined,
   MessageOutlined,
-  PlusOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
+import type { ReactNode } from 'react';
 import type { UserInfo } from '@/types/User/User';
 
-interface HomeShellProps {
+export interface HomeShellProps {
   user: UserInfo | null;
   isUserLoading: boolean;
   isLoggingOut: boolean;
+  isMobileChatOpen: boolean;
+  sidebarContent: ReactNode;
+  chatContent: ReactNode;
+  detailContent: ReactNode;
   onLogout: () => void;
 }
 
@@ -24,11 +28,27 @@ function accountInitial(user: UserInfo | null): string {
   return user?.username?.trim().slice(0, 1).toUpperCase() || 'A';
 }
 
-export default function HomeShell({ user, isUserLoading, isLoggingOut, onLogout }: HomeShellProps) {
+export default function HomeShell({
+  user,
+  isUserLoading,
+  isLoggingOut,
+  isMobileChatOpen,
+  sidebarContent,
+  chatContent,
+  detailContent,
+  onLogout,
+}: HomeShellProps) {
   return (
     <main className="min-h-screen bg-[#f5f5f7] p-3 text-[#1d1d1f] sm:p-5">
       <section className="mx-auto grid min-h-[calc(100vh-1.5rem)] max-w-[1440px] overflow-hidden border border-black/[0.08] bg-white shadow-[0_18px_50px_rgba(0,0,0,0.08)] sm:min-h-[calc(100vh-2.5rem)] sm:grid-cols-[248px_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)_280px]">
-        <aside className="flex min-h-[244px] flex-col border-b border-black/[0.08] bg-[#fbfbfd] p-4 sm:min-h-0 sm:border-r sm:border-b-0">
+        <aside
+          data-testid="home-sidebar"
+          className={
+            isMobileChatOpen
+              ? 'hidden min-h-[244px] flex-col border-b border-black/[0.08] bg-[#fbfbfd] p-4 sm:flex sm:min-h-0 sm:border-r sm:border-b-0'
+              : 'flex min-h-[244px] flex-col border-b border-black/[0.08] bg-[#fbfbfd] p-4 sm:min-h-0 sm:border-r sm:border-b-0'
+          }
+        >
           <div className="px-2 text-lg font-semibold">AIM</div>
           <nav className="mt-8" aria-label={'\u4e3b\u5bfc\u822a'}>
             <ul className="grid gap-1">
@@ -47,7 +67,8 @@ export default function HomeShell({ user, isUserLoading, isLoggingOut, onLogout 
               ))}
             </ul>
           </nav>
-          <div className="mt-6 border-t border-black/[0.08] pt-4 sm:mt-auto">
+          <div className="mt-6 min-h-0 flex-1 overflow-y-auto">{sidebarContent}</div>
+          <div className="mt-6 border-t border-black/[0.08] pt-4">
             {isUserLoading ? (
               <div
                 aria-label={'\u6b63\u5728\u52a0\u8f7d\u8d26\u6237\u8d44\u6599'}
@@ -62,36 +83,31 @@ export default function HomeShell({ user, isUserLoading, isLoggingOut, onLogout 
                 <span className="min-w-0 truncate text-sm font-medium">{user?.username || '\u5f53\u524d\u8d26\u6237'}</span>
               </div>
             )}
-          </div>
-        </aside>
-
-        <section className="flex min-h-[420px] flex-col p-5 sm:p-7">
-          <header className="flex items-center justify-between gap-4">
-            <h1 className="text-xl font-semibold">{'\u6d88\u606f'}</h1>
             <button
               type="button"
               onClick={onLogout}
               disabled={isLoggingOut}
-              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-black/[0.12] px-3 py-2 text-sm font-medium text-[#424245] transition hover:border-black/[0.25] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0071e3] disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-black/[0.12] px-3 py-2 text-sm font-medium text-[#424245] transition hover:border-black/[0.25] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0071e3] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <LogoutOutlined aria-hidden />
               {'\u9000\u51fa\u767b\u5f55'}
             </button>
-          </header>
-          <div className="flex flex-1 flex-col items-center justify-center text-center">
-            <span className="grid size-12 place-items-center rounded-lg border border-black/[0.1] text-[#0071e3]">
-              <PlusOutlined aria-hidden />
-            </span>
-            <h2 className="mt-4 text-lg font-semibold">{'\u5f00\u59cb\u4e00\u6bb5\u65b0\u5bf9\u8bdd'}</h2>
-            <p className="mt-2 max-w-xs text-sm leading-6 text-[#6e6e73]">
-              {'\u8054\u7cfb\u4eba\u548c\u4f1a\u8bdd\u5c06\u5728\u8fd9\u91cc\u51fa\u73b0\u3002'}
-            </p>
           </div>
+        </aside>
+
+        <section
+          data-testid="home-chat-panel"
+          className={
+            isMobileChatOpen
+              ? 'flex min-h-[420px] flex-col sm:min-h-0'
+              : 'hidden min-h-[420px] flex-col sm:flex sm:min-h-0'
+          }
+        >
+          {chatContent}
         </section>
 
-        <aside className="hidden border-l border-black/[0.08] bg-[#fbfbfd] p-6 lg:block">
-          <p className="text-xs font-medium text-[#6e6e73]">{'\u5f53\u524d\u72b6\u6001'}</p>
-          <p className="mt-3 text-sm">{'\u4f60\u7684\u5de5\u4f5c\u533a\u5df2\u51c6\u5907\u5c31\u7eea\u3002'}</p>
+        <aside data-testid="home-detail-panel" className="hidden border-l border-black/[0.08] bg-[#fbfbfd] p-6 lg:block">
+          {detailContent}
         </aside>
       </section>
     </main>
