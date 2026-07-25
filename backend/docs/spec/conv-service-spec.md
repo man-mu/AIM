@@ -912,7 +912,14 @@ public class ConvServiceImpl implements ConvService {
 2. **幂等更新**：`UPDATE conversations SET max_seq=#{seq}, ... WHERE id=#{convId} AND max_seq < #{seq}`
 3. 被 Dubbo RPC 和 Kafka 消费者共同调用
 
-**getConversation/listConversations/getMembers**：只读，批量调 `userRpcService.batchGetUserInfo` 补全成员信息，查 `conv_read_seqs` 拿已读位置，查 Redis 拿未读数
+**getConversation/listConversations/getMembers**：只读，批量调 `userRpcService.batchGetUserInfo` 补全成员信息，查 `conv_read_seqs` 拿已读位置，查 Redis 拿未读数。
+
+> **spec-rev: ConversationDTO 新增 unreadCount 字段**：原 spec 12.2 要求 listConversations 查 Redis 未读数，但 ConversationDTO 无对应字段。已在 common 的 ConversationDTO 加 `unreadCount` 字段（long），由 `getConversation`/`listConversations` 查 Redis 填充。
+>
+> **各方法精确职责**（按 DTO 字段反推）：
+> - **getConversation(convId, userId)**：查 Conversation → 转 DTO → 查 Redis `unreadCache.getUnreadCount` 填充 unreadCount → 返回。不查 read_seqs（DTO 无 lastReadSeq 字段）。
+> - **listConversations(req)**：查用户所有会话（conv_members JOIN conversations，按 max_seq DESC 分页）→ 转 DTO 列表 → 批量查 Redis `unreadCache.batchGetUnread` 填充 unreadCount → 返回。
+> - **getMembers(req)**：查会话成员（conv_members 分页）→ 查 conv_read_seqs 批量拿 lastReadSeq → 调 `userRpcService.batchGetUserInfo` 补全 username/avatar → 转 ConversationMemberDTO 列表。
 
 **getSettings/updateSettings**：`settingsMapper.upsertSettings(...)`（UPSERT，COALESCE 处理 null=不更新）
 

@@ -5,12 +5,15 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
+import java.util.Map;
 import lanshan.manmu.common.constant.ConvType;
 import lanshan.manmu.common.constant.MemberRole;
 import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
 import lanshan.manmu.common.rpc.UserRpcService;
 import lanshan.manmu.common.rpc.dto.conv.*;
+import lanshan.manmu.common.rpc.dto.user.BatchGetUserInfoResp;
+import lanshan.manmu.common.rpc.dto.user.UserInfo;
 import lanshan.manmu.common.util.SnowflakeIdWorker;
 import lanshan.manmu.conv.event.ConvEventPublisher;
 import lanshan.manmu.conv.event.MembersJoinedEvent;
@@ -19,11 +22,18 @@ import lanshan.manmu.conv.mapper.ConvReadSeqMapper;
 import lanshan.manmu.conv.mapper.ConvSettingsMapper;
 import lanshan.manmu.conv.mapper.ConversationMapper;
 import lanshan.manmu.conv.mapper.ConversationMemberMapper;
+import lanshan.manmu.conv.model.entity.ConvReadSeq;
 import lanshan.manmu.conv.model.entity.Conversation;
 import lanshan.manmu.conv.model.entity.ConversationMember;
 import lanshan.manmu.conv.util.ConvConstants;
 import lanshan.manmu.conv.util.PermissionChecker;
 import lanshan.manmu.conv.util.UnreadCacheService;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -58,6 +68,20 @@ class ConvServiceImplTest {
     private static final long PEER     = 2002L;
     private static final long MEMBER_A = 2003L;
     private static final long MEMBER_B = 2004L;
+
+    /**
+     * 纯 Mockito 环境下 MyBatis-Plus 未启动，LambdaQueryWrapper 的 .eq()/.in() 会
+     * 解析 lambda → 字段名，需要 TableInfo 缓存。手动初始化所有 conv 实体的 TableInfo。
+     */
+    @BeforeAll
+    static void initMybatisPlusCache() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(configuration, "");
+        TableInfoHelper.initTableInfo(assistant, lanshan.manmu.conv.model.entity.Conversation.class);
+        TableInfoHelper.initTableInfo(assistant, ConversationMember.class);
+        TableInfoHelper.initTableInfo(assistant, ConvReadSeq.class);
+        TableInfoHelper.initTableInfo(assistant, lanshan.manmu.conv.model.entity.ConvSettings.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -573,5 +597,188 @@ class ConvServiceImplTest {
         ArgumentCaptor<Conversation> captor = ArgumentCaptor.forClass(Conversation.class);
         verify(convMapper).updateById(captor.capture());
         assertEquals("", captor.getValue().getAnnouncement());
+    }
+
+    // ==================== Phase 1.3 读路径 ====================
+
+    @Test
+    void getConversation_convNotExist_throwsConvNotFound() {
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.getConversation(CONV_ID, CREATOR));
+        assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+    }
+
+    @Test
+    void getConversation_success_unreadCountFilled() {
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        conv.setMaxSeq(100L);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(unreadCache.getUnreadCount(CREATOR, CONV_ID)).thenReturn(5L);
+
+        ConversationDTO dto = convService.getConversation(CONV_ID, CREATOR);
+
+        assertEquals(CONV_ID, dto.getId());
+        assertEquals(ConvType.GROUP, dto.getType());
+        assertEquals(CREATOR, dto.getOwnerId());
+        assertEquals(3, dto.getMemberCount());
+        assertEquals(100L, dto.getMaxSeq());
+        assertEquals(5L, dto.getUnreadCount(), "unreadCount 应从 Redis 填充");
+        verify(unreadCache).getUnreadCount(CREATOR, CONV_ID);
+    }
+
+    @Test
+    void listConversations_empty_returnsEmptyList() {
+        Page<Conversation> emptyPage = new Page<>(1, 20);
+        emptyPage.setTotal(0);
+        when(convMapper.listUserConversations(any(IPage.class), eq(CREATOR))).thenReturn(emptyPage);
+
+        ListConversationsReq req = new ListConversationsReq(CREATOR, 1, 20);
+        ListConversationsResp resp = convService.listConversations(req);
+
+        assertNotNull(resp.getConversations());
+        assertTrue(resp.getConversations().isEmpty());
+        assertEquals(0L, resp.getTotal());
+        // 空列表不查 Redis
+        verify(unreadCache, never()).batchGetUnread(anyLong(), anyList());
+    }
+
+    @Test
+    void listConversations_normal_batchFillUnreadCount() {
+        Conversation c1 = mockConv(8001L, ConvType.GROUP, CREATOR, 3);
+        c1.setMaxSeq(100L);
+        Conversation c2 = mockConv(8002L, ConvType.SINGLE, 0L, 2);
+        c2.setMaxSeq(50L);
+        Page<Conversation> page = new Page<>(1, 20);
+        page.setRecords(List.of(c1, c2));
+        page.setTotal(2);
+        when(convMapper.listUserConversations(any(IPage.class), eq(CREATOR))).thenReturn(page);
+        Map<Long, Long> unreadMap = Map.of(8001L, 3L, 8002L, 0L);
+        when(unreadCache.batchGetUnread(eq(CREATOR), anyList())).thenReturn(unreadMap);
+
+        ListConversationsReq req = new ListConversationsReq(CREATOR, 1, 20);
+        ListConversationsResp resp = convService.listConversations(req);
+
+        assertEquals(2, resp.getConversations().size());
+        assertEquals(2L, resp.getTotal());
+        assertEquals(8001L, resp.getConversations().get(0).getId());
+        assertEquals(3L, resp.getConversations().get(0).getUnreadCount());
+        assertEquals(8002L, resp.getConversations().get(1).getId());
+        assertEquals(0L, resp.getConversations().get(1).getUnreadCount());
+    }
+
+    @Test
+    void listConversations_defaultPaging() {
+        // pageNum/pageSize <= 0 时用默认值 1/20
+        Page<Conversation> emptyPage = new Page<>(1, 20);
+        emptyPage.setTotal(0);
+        when(convMapper.listUserConversations(any(IPage.class), eq(CREATOR))).thenReturn(emptyPage);
+
+        ListConversationsReq req = new ListConversationsReq(CREATOR, 0, 0);
+        convService.listConversations(req);
+
+        ArgumentCaptor<IPage<Conversation>> captor = ArgumentCaptor.forClass(IPage.class);
+        verify(convMapper).listUserConversations(captor.capture(), eq(CREATOR));
+        IPage<Conversation> usedPage = captor.getValue();
+        assertEquals(1L, usedPage.getCurrent());
+        assertEquals(20L, usedPage.getSize());
+    }
+
+    @Test
+    void getMembers_empty_returnsEmptyList() {
+        Page<ConversationMember> emptyPage = new Page<>(1, 20);
+        emptyPage.setTotal(0);
+        when(memberMapper.selectPage(any(IPage.class), any())).thenReturn(emptyPage);
+
+        GetMembersReq req = new GetMembersReq(CONV_ID, CREATOR, 1, 20);
+        GetMembersResp resp = convService.getMembers(req);
+
+        assertNotNull(resp.getMembers());
+        assertTrue(resp.getMembers().isEmpty());
+        assertEquals(0L, resp.getTotal());
+        // 空成员不查 readSeqs / userRpcService
+        verify(readSeqMapper, never()).selectList(any());
+        verify(userRpcService, never()).batchGetUserInfo(any());
+    }
+
+    @Test
+    void getMembers_normal_fillLastReadSeqAndUserInfo() {
+        ConversationMember m1 = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
+        ConversationMember m2 = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
+        Page<ConversationMember> page = new Page<>(1, 20);
+        page.setRecords(List.of(m1, m2));
+        page.setTotal(2);
+        when(memberMapper.selectPage(any(IPage.class), any())).thenReturn(page);
+
+        // mock readSeqs：CREATOR 已读到 100，MEMBER_A 无记录（默认 0）
+        ConvReadSeq rs1 = new ConvReadSeq();
+        rs1.setConvId(CONV_ID);
+        rs1.setUserId(CREATOR);
+        rs1.setLastReadSeq(100L);
+        when(readSeqMapper.selectList(any())).thenReturn(List.of(rs1));
+
+        // mock 用户信息
+        UserInfo u1 = new UserInfo();
+        u1.setId(CREATOR);
+        u1.setUsername("creator_name");
+        u1.setAvatar("avatar1.jpg");
+        UserInfo u2 = new UserInfo();
+        u2.setId(MEMBER_A);
+        u2.setUsername("member_a_name");
+        u2.setAvatar("avatar2.jpg");
+        when(userRpcService.batchGetUserInfo(any())).thenReturn(new BatchGetUserInfoResp(List.of(u1, u2)));
+
+        GetMembersReq req = new GetMembersReq(CONV_ID, CREATOR, 1, 20);
+        GetMembersResp resp = convService.getMembers(req);
+
+        assertEquals(2, resp.getMembers().size());
+        assertEquals(2L, resp.getTotal());
+
+        ConversationMemberDTO dto1 = resp.getMembers().get(0);
+        assertEquals(CREATOR, dto1.getUserId());
+        assertEquals("creator_name", dto1.getUsername());
+        assertEquals("avatar1.jpg", dto1.getAvatar());
+        assertEquals(MemberRole.OWNER, dto1.getRole());
+        assertEquals(100L, dto1.getLastReadSeq());
+        assertEquals(1, dto1.getMemberType()); // 'user' → 1
+
+        ConversationMemberDTO dto2 = resp.getMembers().get(1);
+        assertEquals(MEMBER_A, dto2.getUserId());
+        assertEquals("member_a_name", dto2.getUsername());
+        assertEquals(MemberRole.MEMBER, dto2.getRole());
+        assertEquals(0L, dto2.getLastReadSeq(), "无 readSeq 记录默认 0");
+    }
+
+    @Test
+    void getMembers_userRpcReturnsNull_fallbackEmptyUsername() {
+        ConversationMember m1 = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
+        Page<ConversationMember> page = new Page<>(1, 20);
+        page.setRecords(List.of(m1));
+        page.setTotal(1);
+        when(memberMapper.selectPage(any(IPage.class), any())).thenReturn(page);
+        when(readSeqMapper.selectList(any())).thenReturn(List.of());
+        // userRpcService 返回 null（容错验证）
+        when(userRpcService.batchGetUserInfo(any())).thenReturn(null);
+
+        GetMembersReq req = new GetMembersReq(CONV_ID, CREATOR, 1, 20);
+        GetMembersResp resp = convService.getMembers(req);
+
+        assertEquals(1, resp.getMembers().size());
+        assertEquals("", resp.getMembers().get(0).getUsername());
+        assertEquals("", resp.getMembers().get(0).getAvatar());
+    }
+
+    @Test
+    void isMember_exist_returnsTrue() {
+        when(permissionChecker.getMember(CONV_ID, CREATOR))
+                .thenReturn(mockMember(CONV_ID, CREATOR, MemberRole.OWNER));
+        assertTrue(convService.isMember(CONV_ID, CREATOR));
+    }
+
+    @Test
+    void isMember_notExist_returnsFalse() {
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(null);
+        assertFalse(convService.isMember(CONV_ID, CREATOR));
     }
 }

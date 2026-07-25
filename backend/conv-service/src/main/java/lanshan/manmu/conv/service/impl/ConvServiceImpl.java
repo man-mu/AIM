@@ -2,12 +2,17 @@ package lanshan.manmu.conv.service.impl;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lanshan.manmu.common.constant.ConvType;
 import lanshan.manmu.common.constant.MemberRole;
 import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
 import lanshan.manmu.common.rpc.UserRpcService;
 import lanshan.manmu.common.rpc.dto.conv.*;
+import lanshan.manmu.common.rpc.dto.user.BatchGetUserInfoReq;
+import lanshan.manmu.common.rpc.dto.user.BatchGetUserInfoResp;
+import lanshan.manmu.common.rpc.dto.user.UserInfo;
 import lanshan.manmu.common.util.SnowflakeIdWorker;
 import lanshan.manmu.conv.event.ConvEventPublisher;
 import lanshan.manmu.conv.event.MembersJoinedEvent;
@@ -16,12 +21,16 @@ import lanshan.manmu.conv.mapper.ConvReadSeqMapper;
 import lanshan.manmu.conv.mapper.ConvSettingsMapper;
 import lanshan.manmu.conv.mapper.ConversationMapper;
 import lanshan.manmu.conv.mapper.ConversationMemberMapper;
+import lanshan.manmu.conv.model.entity.ConvReadSeq;
 import lanshan.manmu.conv.model.entity.Conversation;
 import lanshan.manmu.conv.model.entity.ConversationMember;
 import lanshan.manmu.conv.service.ConvService;
 import lanshan.manmu.conv.util.ConvConstants;
 import lanshan.manmu.conv.util.PermissionChecker;
 import lanshan.manmu.conv.util.UnreadCacheService;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.dubbo.config.annotation.DubboReference;
 import org.springframework.context.ApplicationEventPublisher;
@@ -269,27 +278,83 @@ public class ConvServiceImpl implements ConvService {
         convMapper.updateById(conv);
     }
 
-    // ==================== Phase 1.3/1.4 待实现 ====================
+    // ==================== Phase 1.3 读路径 ====================
 
     @Override
     public ConversationDTO getConversation(long conversationId, long userId) {
-        throw new UnsupportedOperationException("not implemented yet");
+        Conversation conv = convMapper.selectById(conversationId);
+        if (conv == null) {
+            throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + conversationId);
+        }
+        ConversationDTO dto = toDto(conv);
+        dto.setUnreadCount(unreadCache.getUnreadCount(userId, conversationId));
+        return dto;
     }
 
     @Override
     public ListConversationsResp listConversations(ListConversationsReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        long userId = req.getUserId();
+        int pageNum = req.getPageNum() <= 0 ? 1 : req.getPageNum();
+        int pageSize = req.getPageSize() <= 0 ? 20 : Math.min(req.getPageSize(), 100);
+
+        Page<Conversation> page = new Page<>(pageNum, pageSize);
+        IPage<Conversation> result = convMapper.listUserConversations(page, userId);
+
+        List<ConversationDTO> dtos = result.getRecords().stream().map(this::toDto).toList();
+
+        // 批量查未读数
+        if (!dtos.isEmpty()) {
+            List<Long> convIds = dtos.stream().map(ConversationDTO::getId).toList();
+            Map<Long, Long> unreadMap = unreadCache.batchGetUnread(userId, convIds);
+            dtos.forEach(dto -> dto.setUnreadCount(unreadMap.getOrDefault(dto.getId(), 0L)));
+        }
+
+        return new ListConversationsResp(dtos, result.getTotal());
     }
 
     @Override
     public GetMembersResp getMembers(GetMembersReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        long convId = req.getConversationId();
+        int pageNum = req.getPageNum() <= 0 ? 1 : req.getPageNum();
+        int pageSize = req.getPageSize() <= 0 ? 20 : Math.min(req.getPageSize(), 100);
+
+        // 查会话成员分页（按 role ASC：OWNER 在前，ADMIN 次之，MEMBER 最后）
+        Page<ConversationMember> page = new Page<>(pageNum, pageSize);
+        LambdaQueryWrapper<ConversationMember> wrapper = new LambdaQueryWrapper<ConversationMember>()
+                .eq(ConversationMember::getConvId, convId)
+                .orderByAsc(ConversationMember::getRole);
+        IPage<ConversationMember> result = memberMapper.selectPage(page, wrapper);
+
+        List<ConversationMember> members = result.getRecords();
+        if (members.isEmpty()) {
+            return new GetMembersResp(List.of(), 0L);
+        }
+
+        // 批量查 lastReadSeq
+        List<Long> userIds = members.stream().map(ConversationMember::getUserId).toList();
+        List<ConvReadSeq> readSeqs = readSeqMapper.selectList(new LambdaQueryWrapper<ConvReadSeq>()
+                .eq(ConvReadSeq::getConvId, convId)
+                .in(ConvReadSeq::getUserId, userIds));
+        Map<Long, Long> readSeqMap = readSeqs.stream()
+                .collect(Collectors.toMap(ConvReadSeq::getUserId, ConvReadSeq::getLastReadSeq, (a, b) -> a));
+
+        // 批量查用户信息补全 username/avatar
+        BatchGetUserInfoResp userResp = userRpcService.batchGetUserInfo(new BatchGetUserInfoReq(userIds));
+        Map<Long, UserInfo> userMap = (userResp == null || userResp.getUsers() == null) ? Map.of() :
+                userResp.getUsers().stream().collect(Collectors.toMap(UserInfo::getId, u -> u, (a, b) -> a));
+
+        // 转 DTO
+        List<ConversationMemberDTO> dtos = members.stream().map(m -> toMemberDto(m, readSeqMap, userMap)).toList();
+
+        return new GetMembersResp(dtos, result.getTotal());
     }
 
     @Override
     public boolean isMember(long conversationId, long userId) {
-        throw new UnsupportedOperationException("not implemented yet");
+        return permissionChecker.getMember(conversationId, userId) != null;
     }
+
+    // ==================== Phase 1.4 待实现 ====================
 
     @Override
     public PreCheckSendResp preCheckSend(PreCheckSendReq req) {
@@ -365,6 +430,36 @@ public class ConvServiceImpl implements ConvService {
         dto.setMutedAll(conv.getIsMutedAll());
         dto.setCreatedAt(conv.getCreatedAt() == null ? 0L : conv.getCreatedAt().toInstant().toEpochMilli());
         dto.setUpdatedAt(conv.getUpdatedAt() == null ? 0L : conv.getUpdatedAt().toInstant().toEpochMilli());
+        // unreadCount 由调用方（getConversation/listConversations）单独 set
         return dto;
+    }
+
+    private ConversationMemberDTO toMemberDto(ConversationMember m, Map<Long, Long> readSeqMap,
+                                                Map<Long, UserInfo> userMap) {
+        ConversationMemberDTO dto = new ConversationMemberDTO();
+        dto.setUserId(m.getUserId());
+        UserInfo user = userMap.get(m.getUserId());
+        dto.setUsername(user == null ? "" : user.getUsername());
+        dto.setAvatar(user == null ? "" : user.getAvatar());
+        dto.setRole(m.getRole());
+        dto.setAlias(m.getAlias() == null ? "" : m.getAlias());
+        dto.setJoinedAt(m.getJoinedAt() == null ? 0L : m.getJoinedAt().toInstant().toEpochMilli());
+        dto.setLastReadSeq(readSeqMap.getOrDefault(m.getUserId(), 0L));
+        dto.setMuted(Boolean.TRUE.equals(m.getIsMuted()));
+        dto.setMuteUntil(m.getMuteUntil() == null ? 0L : m.getMuteUntil());
+        dto.setMemberType(toDtoType(m.getMemberType()));
+        dto.setBotId(m.getBotId() == null ? 0L : m.getBotId());
+        return dto;
+    }
+
+    /** memberType DB('user'/'bot') → DTO(1/2)，spec 第 17 节 */
+    private static int toDtoType(String dbType) {
+        return ConvConstants.MEMBER_TYPE_BOT.equals(dbType) ? 2 : 1;
+    }
+
+    /** memberType DTO(1/2) → DB('user'/'bot')，spec 第 17 节 */
+    @SuppressWarnings("unused")
+    private static String toDbType(int dtoType) {
+        return dtoType == 2 ? ConvConstants.MEMBER_TYPE_BOT : ConvConstants.MEMBER_TYPE_USER;
     }
 }
