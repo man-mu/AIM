@@ -100,6 +100,88 @@ input:-webkit-autofill:active {
   caret-color: #1d1d1f !important;
 }
 
+.register-stepper__list {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 0 28px;
+  padding: 0;
+  list-style: none;
+}
+
+.register-stepper__list::before,
+.register-stepper__list::after {
+  position: absolute;
+  z-index: 0;
+  top: 14px;
+  left: 25%;
+  width: 50%;
+  height: 1px;
+  content: '';
+}
+
+.register-stepper__list::before {
+  background: #d2d2d7;
+}
+
+.register-stepper__list::after {
+  background: #0071e3;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 180ms ease;
+}
+
+.register-stepper__list--complete::after {
+  transform: scaleX(1);
+}
+
+.register-stepper__item {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #86868b;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.register-stepper__node {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #d2d2d7;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.register-stepper__item.is-current,
+.register-stepper__item.is-complete {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+.register-stepper__item.is-current .register-stepper__node,
+.register-stepper__item.is-complete .register-stepper__node {
+  border-color: #0071e3;
+  background: #0071e3;
+  color: #fff;
+}
+
+.register-stepper__actions {
+  display: flex;
+  gap: 12px;
+}
+
+.register-stepper__actions .ant-btn {
+  flex: 1;
+}
+
 @media (max-width: 480px) {
   .auth-page {
     align-items: start;
@@ -113,5 +195,13 @@ input:-webkit-autofill:active {
 
   .auth-panel {
     padding: 24px;
+  }
+
+  .register-stepper__list {
+    margin-bottom: 24px;
+  }
+
+  .register-stepper__label {
+    overflow-wrap: anywhere;
   }
 }
