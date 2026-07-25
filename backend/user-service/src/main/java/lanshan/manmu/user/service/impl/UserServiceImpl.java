@@ -95,27 +95,19 @@ public class UserServiceImpl implements UserService {
         }
         List<User> existing = userMapper.selectList(qw);
         if (!existing.isEmpty()) {
-            // 遍历所有匹配记录逐字段判定，避免只取首条漏判真实冲突类型
+            // 单次遍历逐字段匹配，优先级：username > phone > email
             for (User conflict : existing) {
                 if (conflict.getUsername().equals(req.getUsername())) {
                     log.warn("register 用户名已存在: username={}", req.getUsername());
                     throw new BizException(ErrorCode.USER_ALREADY_EXISTS);
                 }
-            }
-            if (hasPhone) {
-                for (User conflict : existing) {
-                    if (req.getPhone().equals(conflict.getPhone())) {
-                        log.warn("register 手机号已注册: phone={}", maskPhone(req.getPhone()));
-                        throw new BizException(ErrorCode.USER_PHONE_EXISTS);
-                    }
+                if (hasPhone && req.getPhone().equals(conflict.getPhone())) {
+                    log.warn("register 手机号已注册: phone={}", maskPhone(req.getPhone()));
+                    throw new BizException(ErrorCode.USER_PHONE_EXISTS);
                 }
-            }
-            if (hasEmail) {
-                for (User conflict : existing) {
-                    if (req.getEmail().equals(conflict.getEmail())) {
-                        log.warn("register 邮箱已注册: email={}", maskEmail(req.getEmail()));
-                        throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
-                    }
+                if (hasEmail && req.getEmail().equals(conflict.getEmail())) {
+                    log.warn("register 邮箱已注册: email={}", maskEmail(req.getEmail()));
+                    throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
                 }
             }
             // 兜底（理论不可达，OR 查询的每条匹配必命中上述三个字段之一）
@@ -274,7 +266,7 @@ public class UserServiceImpl implements UserService {
         Object jtiObj = jwt.getPayload("jti");
         String jti = jtiObj == null ? null : String.valueOf(jtiObj);
         if (jti == null || jti.isEmpty() || "null".equals(jti)
-                || Boolean.TRUE.equals(redisTemplate.hasKey("revoked_token:" + jti))) {
+                || redisTemplate.hasKey("revoked_token:" + jti)) {
             log.warn("refreshToken 已被吊销或缺 jti");
             throw new BizException(ErrorCode.USER_TOKEN_INVALID);
         }
@@ -314,7 +306,7 @@ public class UserServiceImpl implements UserService {
         if (jti == null || jti.isEmpty() || "null".equals(jti)) {
             return invalidTokenResp();
         }
-        if (Boolean.TRUE.equals(redisTemplate.hasKey("revoked_token:" + jti))) {
+        if (redisTemplate.hasKey("revoked_token:" + jti)) {
             return invalidTokenResp();
         }
 

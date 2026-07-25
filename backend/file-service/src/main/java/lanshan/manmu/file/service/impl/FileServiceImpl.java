@@ -154,6 +154,7 @@ public class FileServiceImpl implements FileService {
                     "文件状态非 PENDING，当前状态: " + entity.getStatus());
         }
 
+        // TODO 反模式：当前仅存储前端上报的 MD5，不校验，Phase 2 应改为服务端从 MinIO 下载后自行计算 MD5
         // MD5 处理（Phase 1 仅日志不阻断）
         if (req.getMd5() != null && !req.getMd5().isEmpty()) {
             if (entity.getMd5() != null && !entity.getMd5().isEmpty()

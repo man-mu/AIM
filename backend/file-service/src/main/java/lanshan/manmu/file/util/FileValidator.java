@@ -39,7 +39,7 @@ public final class FileValidator {
      * 校验文件大小。
      * @param size 文件大小（字节）
      * @param purpose 文件用途：1=消息附件 2=头像 3=文档 4=媒体
-     *                注：purpose 由客户端传入，不可信；仅 purpose=2(头像) 按图片限制 50MB，
+     *                注：purpose 由客户端传入，不可信；仅 purpose=2(头像) 按图片限制 5MB，
      *                其余（含 purpose=0 默认值 / purpose=4 媒体）按附件限制 100MB
      */
     public static void validateSize(long size, int purpose) {

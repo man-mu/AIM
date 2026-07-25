@@ -45,7 +45,7 @@ public final class CommonConst {
     public static final int FILE_STATUS_DELETED   = 2;
 
     // file-service — 文件大小限制（按 purpose 区分）
-    public static final long FILE_MAX_SIZE_IMAGE      = 50L * 1024 * 1024;   // 图片 ≤ 50MB
+    public static final long FILE_MAX_SIZE_IMAGE      = 5L * 1024 * 1024;   // 图片 ≤ 5MB
     public static final long FILE_MAX_SIZE_ATTACHMENT = 100L * 1024 * 1024;  // 附件 ≤ 100MB
 
     // file-service — Presigned URL 有效期（服务端固定，忽略客户端传值）
