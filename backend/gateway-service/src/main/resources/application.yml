@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 9080  # 避免 nacos 3.x console 端口 8080 冲突
 
 spring:
   application:
@@ -32,11 +32,14 @@ spring:
           uri: lb://file-service
           predicates:
             - Path=/api/v1/files/**
+  config:
+    import:
+      - optional:nacos:gateway-service.yml
+      - optional:nacos:application.yml?group=COMMON_GROUP
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
 
-aim:
-  jwt:
-    secret: ${JWT_SECRET:aim-default-jwt-secret-change-in-prod}
+jwt:
+  secret: ${JWT_SECRET:aim-jwt-secret-key-change-in-production}

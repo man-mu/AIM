@@ -44,7 +44,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private final StringRedisTemplate redis;
 
-    @Value("${aim.jwt.secret}")
+    @Value("${jwt.secret}")
     private String jwtSecret;
 
     @Override

@@ -17,7 +17,7 @@
 | 4 | API 路径前缀 | Controller 自带 `/api/v1/`，网关不 strip | 与 API 文档完全对齐 |
 | 5 | 全局异常处理 | 每个服务一个 `@RestControllerAdvice` | 服务自治，不抽到 common |
 | 6 | 大整数序列化 | Jackson 配置 + 前端 JSONbig | 复用前端现有方案 |
-| 7 | 端口分配 | gateway=8080, user=8081, conv=8082, file=8083 | 顺序分配，无冲突 |
+| 7 | 端口分配 | gateway=9080, user=8081, conv=8082, file=8083 | 顺序分配，无冲突 |
 | 8 | 网关 Redis | 黑名单查询 | 复用 user-service 现有 `revoked_token:{jti}` 机制 |
 | 9 | 白名单路径 | `/api/v1/auth/login`, `/register`, `/refresh`, `/public/**` | 与前端 client.ts WHITE_LIST 对齐 |
 | 10 | 网关不写业务逻辑 | 严格遵守 AGENTS.md 反模式 | gateway 只做路由 + 鉴权 |
@@ -28,7 +28,7 @@
 
 ### 1.1 链路总览
 ```
-前端 → gateway-service(8080, SCG + JwtAuthGlobalFilter)
+前端 → gateway-service(9080, SCG + JwtAuthGlobalFilter)
          ↓ 注入 X-User-Id / X-Device-Id / X-Platform
        按路径路由到下游
          ↓
@@ -60,13 +60,13 @@
 ### 2.1 端口分配
 | 服务 | HTTP 端口 | Dubbo 端口 |
 |---|---|---|
-| gateway-service | 8080 | — |
+| gateway-service | 9080 | — |
 | user-service | 8081 | 20881 |
 | conv-service | 8082 | 20883 |
 | file-service | 8083 | 20884 |
 
 ### 2.2 路径前缀策略
-- **前端调用**：`http://{host}:8080/api/v1/{资源}`（与 [api-v1.md](../API/api-v1.md) Base URL 一致）
+- **前端调用**：`http://{host}:9080/api/v1/{资源}`（与 [api-v1.md](../API/api-v1.md) Base URL 一致）
 - **网关路由**：按 `Path=/api/v1/{service}/**` 路由，**网关不 strip 前缀**
 - **Controller 路径**：`@RequestMapping("/api/v1/{资源}")`，与 API 文档完全对齐
 
@@ -438,23 +438,23 @@ mvn test -pl user-service,conv-service,file-service
 ### 10.4 接口验证（curl）
 ```bash
 # 注册
-curl -X POST http://localhost:8080/api/v1/auth/register \
+curl -X POST http://localhost:9080/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username":"test","password":"Abc@123456","deviceId":"d1","platform":"web"}'
 
 # 登录拿 token
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:9080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"account":"test","password":"Abc@123456","deviceId":"d1","platform":"web"}' | jq -r '.data.tokens.accessToken')
 
 # 创建会话（带 token，网关注入 X-User-Id）
-curl -X POST http://localhost:8080/api/v1/convs \
+curl -X POST http://localhost:9080/api/v1/convs \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"type":1,"peerUserId":123456}'
 
 # 拉会话列表
-curl http://localhost:8080/api/v1/convs -H "Authorization: Bearer $TOKEN"
+curl http://localhost:9080/api/v1/convs -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 10.5 鉴权验证

@@ -637,7 +637,9 @@ public class UserServiceImpl implements UserService {
             return d.getTime();
         }
         if (exp instanceof Number n) {
-            return n.longValue();
+            long v = n.longValue();
+            // JWT 规范中 exp 是秒级时间戳；若值小于 10^12 判定为秒级，乘 1000 转毫秒
+            return v < 1_000_000_000_000L ? v * 1000L : v;
         }
         return 0L;
     }

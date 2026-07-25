@@ -346,7 +346,7 @@ Long ID 统一用 `string` 承接，避免 JavaScript `number` 精度问题。�
 环境变量：
 
 ```text
-VITE_API_BASE_URL=http://localhost:8080/api/v1
+VITE_API_BASE_URL=http://localhost:9080/api/v1
 VITE_WS_URL=ws://localhost:8081/ws
 VITE_APP_ENV=local
 ```

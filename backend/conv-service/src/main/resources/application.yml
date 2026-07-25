@@ -31,3 +31,7 @@ spring:
 server:
   port: ${SERVER_PORT:8082}
   forward-headers-strategy: framework
+
+dubbo:
+  qos:
+    enable: false  # 禁用 QoS 运维端口（22222），避免多服务同主机启动时端口冲突
