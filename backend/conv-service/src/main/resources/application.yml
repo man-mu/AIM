@@ -1,29 +1,26 @@
+# application.yml
+# 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
+# 业务配置全部在 Nacos 配置中心对应 namespace 的 conv-service.yml DataId 下
+# conv-service 是纯 Dubbo Provider，不对外提供 HTTP 端口
 spring:
   application:
     name: conv-service
-  datasource:
-    url: jdbc:postgresql://localhost:5432/aim
-    username: postgres
-    password: postgres
-    driver-class-name: org.postgresql.Driver
-  data:
-    redis:
-      host: localhost
-      port: 6379
   cloud:
     nacos:
+      # 公共连接属性，config / discovery 模块自动继承
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      # group 不能放公共层（discovery 默认 DEFAULT_GROUP，config 才用 AIM_GROUP）
+      config:
+        group: ${NACOS_GROUP:AIM_GROUP}
+        file-extension: yml
       discovery:
-        server-addr: localhost:8848
-
-dubbo:
-  application:
-    name: conv-service
-  protocol:
-    name: dubbo
-    port: 20883
-  registry:
-    address: nacos://localhost:8848
-
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
+        group: ${NACOS_GROUP:AIM_GROUP}
+  config:
+    import:
+      # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
+      # 第二条拉共享公共配置
+      - optional:nacos:conv-service.yml
+      - optional:nacos:application.yml?group=COMMON_GROUP

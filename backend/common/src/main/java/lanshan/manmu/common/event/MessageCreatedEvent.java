@@ -26,6 +26,8 @@ public class MessageCreatedEvent {
     private int msgType;
     @JsonProperty("content")
     private Map<String, Object> content;
+    @JsonProperty("preview")
+    private String preview;
     private long seq;
     @JsonProperty("reply_to_msg_id")
     private long replyToMsgId;

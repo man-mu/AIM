@@ -43,6 +43,7 @@ DECLARE
     shared_content TEXT := E'# 共享公共配置\nmybatis-plus:\n  configuration:\n    map-underscore-to-camel-case: true\n';
     user_svc_content TEXT := E'# user-service 主配置（敏感值由环境变量注入）\nspring:\n  datasource:\n    url: jdbc:postgresql://${DB_HOST:localhost}:5432/aim?currentSchema=%22user%22&stringtype=unspecified\n    username: ${DB_USER:postgres}\n    password: ${DB_PASSWORD:postgres}\n    driver-class-name: org.postgresql.Driver\n  data:\n    redis:\n      host: ${REDIS_HOST:localhost}\n      port: ${REDIS_PORT:6379}\ndubbo:\n  application:\n    name: user-service\n  protocol:\n    name: dubbo\n    port: 20881\n  registry:\n    address: nacos://${NACOS_USERNAME:nacos}:${NACOS_PASSWORD:nacos}@${NACOS_ADDR:localhost:8848}?namespace=${NACOS_NAMESPACE:dev}&group=${NACOS_GROUP:AIM_GROUP}\naim:\n  snowflake:\n    worker-id: 0\njwt:\n  secret: ${JWT_SECRET:aim-jwt-secret-key-change-in-production}\n  expire-sec: 7200\n  refresh-sec: 2592000\n';
     file_svc_content TEXT := E'# file-service 主配置（敏感值由环境变量注入）\nspring:\n  datasource:\n    url: jdbc:postgresql://${DB_HOST:localhost}:5432/aim?currentSchema=%22file%22&stringtype=unspecified\n    username: ${DB_USER:postgres}\n    password: ${DB_PASSWORD:postgres}\n    driver-class-name: org.postgresql.Driver\ndubbo:\n  application:\n    name: file-service\n  protocol:\n    name: dubbo\n    port: 20886\n  registry:\n    address: nacos://${NACOS_USERNAME:nacos}:${NACOS_PASSWORD:nacos}@${NACOS_ADDR:localhost:8848}?namespace=${NACOS_NAMESPACE:dev}&group=${NACOS_GROUP:AIM_GROUP}\naim:\n  snowflake:\n    worker-id: 4\nminio:\n  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}\n  access-key: ${MINIO_ACCESS_KEY:minioadmin}\n  secret-key: ${MINIO_SECRET_KEY:minioadmin}\n  bucket: ${MINIO_BUCKET:aim}\n';
+    conv_svc_content TEXT := E'# conv-service 主配置（敏感值由环境变量注入）\nspring:\n  datasource:\n    url: jdbc:postgresql://${DB_HOST:localhost}:5432/aim?currentSchema=%22conv%22&stringtype=unspecified\n    username: ${DB_USER:postgres}\n    password: ${DB_PASSWORD:postgres}\n    driver-class-name: org.postgresql.Driver\n  data:\n    redis:\n      host: ${REDIS_HOST:localhost}\n      port: ${REDIS_PORT:6379}\n  kafka:\n    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}\n    consumer:\n      group-id: conv-service\n      auto-offset-reset: earliest\n      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer\n      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer\n    producer:\n      key-serializer: org.apache.kafka.common.serialization.StringSerializer\n      value-serializer: org.apache.kafka.common.serialization.StringSerializer\ndubbo:\n  application:\n    name: conv-service\n  protocol:\n    name: dubbo\n    port: 20883\n  registry:\n    address: nacos://${NACOS_USERNAME:nacos}:${NACOS_PASSWORD:nacos}@${NACOS_ADDR:localhost:8848}?namespace=${NACOS_NAMESPACE:dev}&group=${NACOS_GROUP:AIM_GROUP}\naim:\n  snowflake:\n    worker-id: 3\n';
     ns_list TEXT[] := ARRAY['dev', 'test', 'prod'];
     ns TEXT;
 BEGIN
@@ -57,6 +58,10 @@ BEGIN
 
         INSERT INTO config_info (data_id, group_id, content, md5, src_ip, tenant_id, type)
         VALUES ('file-service.yml', 'AIM_GROUP', file_svc_content, md5(file_svc_content), '127.0.0.1', ns, 'yaml')
+        ON CONFLICT (data_id, group_id, tenant_id) DO NOTHING;
+
+        INSERT INTO config_info (data_id, group_id, content, md5, src_ip, tenant_id, type)
+        VALUES ('conv-service.yml', 'AIM_GROUP', conv_svc_content, md5(conv_svc_content), '127.0.0.1', ns, 'yaml')
         ON CONFLICT (data_id, group_id, tenant_id) DO NOTHING;
     END LOOP;
 END $$;
