@@ -105,7 +105,7 @@ describe('LocalConversationProvider', () => {
     expect(messages.every((message) => message.conversationId === 'conv-linchuan')).toBe(true);
     expect(messages.every((message) => message.seq === null)).toBe(true);
     expect(messages[0]?.content.text).toBe('  \u7b2c\u4e00\u884c\n\u7b2c\u4e8c\u884c  ');
-    expect(screen.getByTestId('active-preview')).toHaveTextContent('\u6700\u540e\u4e00\u6761');
+    expect(screen.getByTestId('active-preview').textContent).toBe('\u6700\u540e\u4e00\u6761');
 
     dateNow.mockRestore();
   });
