@@ -72,6 +72,8 @@ describe('Home', () => {
     render(<Home />);
 
     expect(screen.getByText('cached-user')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /\u6797\u5ddd/ })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' }));
 
     expect(homeMocks.localLogoutMutate).toHaveBeenCalledTimes(1);
