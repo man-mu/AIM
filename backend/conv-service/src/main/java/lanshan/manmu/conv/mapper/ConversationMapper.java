@@ -6,6 +6,7 @@ import lanshan.manmu.conv.model.entity.Conversation;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface ConversationMapper extends BaseMapper<Conversation> {
@@ -28,4 +29,19 @@ public interface ConversationMapper extends BaseMapper<Conversation> {
             "JOIN conv_members m ON m.conv_id = c.id AND m.user_id = #{userId} " +
             "ORDER BY c.max_seq DESC")
     IPage<Conversation> listUserConversations(IPage<Conversation> page, @Param("userId") Long userId);
+
+    /**
+     * 幂等更新 Last Message（spec 第 12.2 节）。
+     * WHERE max_seq < #{seq} 保证只增不减，天然防重复消费（Kafka 至少一次语义）。
+     *
+     * @return 受影响行数：1=已更新；0=seq 落后或 conv 不存在，跳过
+     */
+    @Update("UPDATE conversations SET max_seq = #{maxSeq}, " +
+            "last_message_id = #{lastMessageId}, last_message_preview = #{lastMessagePreview}, " +
+            "updated_at = NOW() " +
+            "WHERE id = #{convId} AND max_seq < #{maxSeq}")
+    int updateLastMessageSeq(@Param("convId") Long convId,
+                             @Param("lastMessageId") Long lastMessageId,
+                             @Param("maxSeq") Long maxSeq,
+                             @Param("lastMessagePreview") String lastMessagePreview);
 }

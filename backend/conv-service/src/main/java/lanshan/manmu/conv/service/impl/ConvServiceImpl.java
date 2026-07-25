@@ -15,6 +15,7 @@ import lanshan.manmu.common.rpc.dto.user.BatchGetUserInfoResp;
 import lanshan.manmu.common.rpc.dto.user.UserInfo;
 import lanshan.manmu.common.util.SnowflakeIdWorker;
 import lanshan.manmu.conv.event.ConvEventPublisher;
+import lanshan.manmu.conv.event.MarkReadCompletedEvent;
 import lanshan.manmu.conv.event.MembersJoinedEvent;
 import lanshan.manmu.conv.event.MembersLeftEvent;
 import lanshan.manmu.conv.mapper.ConvReadSeqMapper;
@@ -22,6 +23,7 @@ import lanshan.manmu.conv.mapper.ConvSettingsMapper;
 import lanshan.manmu.conv.mapper.ConversationMapper;
 import lanshan.manmu.conv.mapper.ConversationMemberMapper;
 import lanshan.manmu.conv.model.entity.ConvReadSeq;
+import lanshan.manmu.conv.model.entity.ConvSettings;
 import lanshan.manmu.conv.model.entity.Conversation;
 import lanshan.manmu.conv.model.entity.ConversationMember;
 import lanshan.manmu.conv.service.ConvService;
@@ -354,34 +356,119 @@ public class ConvServiceImpl implements ConvService {
         return permissionChecker.getMember(conversationId, userId) != null;
     }
 
-    // ==================== Phase 1.4 待实现 ====================
+    // ==================== Phase 1.4 消息链路 + 事务后置 ====================
 
     @Override
     public PreCheckSendResp preCheckSend(PreCheckSendReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        long convId = req.getConversationId();
+        long userId = req.getUserId();
+
+        // 关键：查成员身份
+        ConversationMember member = permissionChecker.getMember(convId, userId);
+        boolean isMember = member != null;
+
+        // 非关键：查 conv 拿 convType/isMutedAll（错误只 log，不抛）
+        int convType = 0;
+        boolean isMutedAll = false;
+        try {
+            Conversation conv = convMapper.selectById(convId);
+            if (conv != null) {
+                convType = conv.getType();
+                isMutedAll = Boolean.TRUE.equals(conv.getIsMutedAll());
+            }
+        } catch (Exception e) {
+            log.warn("preCheckSend query conv failed convId={}", convId, e);
+        }
+
+        // 填 isMuted/muteUntil（非成员时默认 false/0）
+        boolean isMuted = isMember && Boolean.TRUE.equals(member.getIsMuted());
+        long muteUntil = (isMember && member.getMuteUntil() != null) ? member.getMuteUntil() : 0L;
+
+        // 查全量 memberIds 供 message-service 扇出
+        List<Long> memberIds = listMemberIds(convId);
+
+        // 信息收集型，不做拦截决策（决策 14）
+        return new PreCheckSendResp(isMember, isMuted, isMutedAll, muteUntil, convType, memberIds);
     }
 
     @Override
-    public void markRead(MarkReadReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
-    }
-
-    @Override
+    @Transactional
     public void updateLastMessage(UpdateLastMessageReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        long convId = req.getConversationId();
+        Conversation conv = convMapper.selectById(convId);
+        if (conv == null) {
+            // 不存在仅 WARN 不抛（spec 第 12.2 节），return
+            log.warn("updateLastMessage conv not found convId={}", convId);
+            return;
+        }
+        // 幂等更新：WHERE max_seq < #{seq} 保证只增不减
+        int rows = convMapper.updateLastMessageSeq(convId, req.getLastMessageId(),
+                req.getMaxSeq(), req.getLastMessagePreview());
+        log.debug("updateLastMessage convId={} seq={} affectedRows={}", convId, req.getMaxSeq(), rows);
+    }
+
+    @Override
+    @Transactional
+    public void markRead(MarkReadReq req) {
+        long convId = req.getConversationId();
+        long userId = req.getUserId();
+        long lastReadSeq = req.getLastReadSeq();
+
+        // UPSERT 已读位置（GREATEST 保证只增不减，spec 第 8.3 节）
+        readSeqMapper.upsertReadSeq(snowflake.nextId(), convId, userId, lastReadSeq);
+
+        // 事务后置：Redis DEL + Kafka 发事件，由 ConvEventListener 在 AFTER_COMMIT 执行
+        // 不在事务内调 unreadCache.clearUnreadCount 和 eventPublisher.publishReadUpdated
+        publishAfterCommit(new MarkReadCompletedEvent(userId, convId, lastReadSeq));
     }
 
     @Override
     public GetSettingsResp getSettings(GetSettingsReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        long convId = req.getConversationId();
+        long userId = req.getUserId();
+
+        ConvSettings settings = settingsMapper.selectOne(new LambdaQueryWrapper<ConvSettings>()
+                .eq(ConvSettings::getConvId, convId)
+                .eq(ConvSettings::getUserId, userId));
+
+        boolean isMuted = settings != null && Boolean.TRUE.equals(settings.getIsMuted());
+        boolean isPinned = settings != null && Boolean.TRUE.equals(settings.getIsPinned());
+
+        // nickname 来自 conv_members.alias（用户在该会话的备注名），无设置则空字符串
+        String nickname = "";
+        ConversationMember member = permissionChecker.getMember(convId, userId);
+        if (member != null && member.getAlias() != null) {
+            nickname = member.getAlias();
+        }
+
+        return new GetSettingsResp(isMuted, isPinned, nickname);
     }
 
     @Override
+    @Transactional
     public void updateSettings(UpdateSettingsReq req) {
-        throw new UnsupportedOperationException("not implemented yet");
+        // UPSERT（COALESCE 处理 null=不更新语义，spec 第 8.4 节）
+        settingsMapper.upsertSettings(snowflake.nextId(), req.getConversationId(),
+                req.getUserId(), req.getIsMuted(), req.getIsPinned());
+
+        // nickname 存 conv_members.alias（如非空则更新）
+        if (req.getNickname() != null && !req.getNickname().isEmpty()) {
+            ConversationMember member = permissionChecker.getMember(req.getConversationId(), req.getUserId());
+            if (member != null) {
+                member.setAlias(req.getNickname());
+                memberMapper.updateById(member);
+            }
+        }
     }
 
     // ==================== 私有工具方法 ====================
+
+    /** 查会话全量成员 userId（供 message-service 扇出） */
+    private List<Long> listMemberIds(long convId) {
+        List<ConversationMember> members = memberMapper.selectList(new LambdaQueryWrapper<ConversationMember>()
+                .eq(ConversationMember::getConvId, convId));
+        return members.stream().map(ConversationMember::getUserId).toList();
+    }
 
     private Conversation newConversation(long convId, int type, String name, String avatar,
                                          long ownerId, int memberCount) {

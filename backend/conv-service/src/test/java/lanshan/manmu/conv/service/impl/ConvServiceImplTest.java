@@ -16,6 +16,7 @@ import lanshan.manmu.common.rpc.dto.user.BatchGetUserInfoResp;
 import lanshan.manmu.common.rpc.dto.user.UserInfo;
 import lanshan.manmu.common.util.SnowflakeIdWorker;
 import lanshan.manmu.conv.event.ConvEventPublisher;
+import lanshan.manmu.conv.event.MarkReadCompletedEvent;
 import lanshan.manmu.conv.event.MembersJoinedEvent;
 import lanshan.manmu.conv.event.MembersLeftEvent;
 import lanshan.manmu.conv.mapper.ConvReadSeqMapper;
@@ -23,6 +24,7 @@ import lanshan.manmu.conv.mapper.ConvSettingsMapper;
 import lanshan.manmu.conv.mapper.ConversationMapper;
 import lanshan.manmu.conv.mapper.ConversationMemberMapper;
 import lanshan.manmu.conv.model.entity.ConvReadSeq;
+import lanshan.manmu.conv.model.entity.ConvSettings;
 import lanshan.manmu.conv.model.entity.Conversation;
 import lanshan.manmu.conv.model.entity.ConversationMember;
 import lanshan.manmu.conv.util.ConvConstants;
@@ -780,5 +782,215 @@ class ConvServiceImplTest {
     void isMember_notExist_returnsFalse() {
         when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(null);
         assertFalse(convService.isMember(CONV_ID, CREATOR));
+    }
+
+    // ==================== Phase 1.4 消息链路 + 事务后置 ====================
+
+    @Test
+    void preCheckSend_memberNotMuted_returnsMemberInfo() {
+        ConversationMember member = mockMember(CONV_ID, CREATOR, MemberRole.MEMBER);
+        member.setIsMuted(false);
+        member.setMuteUntil(0L);
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(member);
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        conv.setIsMutedAll(false);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        // mock 成员列表查询
+        when(memberMapper.selectList(any())).thenReturn(List.of(
+                mockMember(CONV_ID, CREATOR, MemberRole.MEMBER),
+                mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER)));
+
+        PreCheckSendReq req = new PreCheckSendReq(CONV_ID, CREATOR);
+        PreCheckSendResp resp = convService.preCheckSend(req);
+
+        assertTrue(resp.isMember(), "成员身份应被识别");
+        assertFalse(resp.isMuted(), "未被禁言");
+        assertFalse(resp.isMutedAll(), "全员未禁言");
+        assertEquals(0L, resp.getMuteUntil());
+        assertEquals(ConvType.GROUP, resp.getConvType());
+        assertEquals(2, resp.getMemberIds().size(), "返回全量 memberIds 供 message-service 扇出");
+    }
+
+    @Test
+    void preCheckSend_nonMember_stillReturnsNoIntercept() {
+        // 非成员：isMember=false，但仍返回（不拦截，决策 14）
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(null);
+        Conversation conv = mockConv(CONV_ID, ConvType.SINGLE, 0L, 2);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(memberMapper.selectList(any())).thenReturn(List.of());
+
+        PreCheckSendReq req = new PreCheckSendReq(CONV_ID, CREATOR);
+        PreCheckSendResp resp = convService.preCheckSend(req);
+
+        assertFalse(resp.isMember(), "非成员 isMember=false");
+        assertFalse(resp.isMuted(), "非成员默认未禁言");
+        assertEquals(0L, resp.getMuteUntil());
+        assertTrue(resp.getMemberIds().isEmpty());
+    }
+
+    @Test
+    void preCheckSend_memberMuted_returnsMuteInfo() {
+        ConversationMember member = mockMember(CONV_ID, CREATOR, MemberRole.MEMBER);
+        member.setIsMuted(true);
+        member.setMuteUntil(99999L);
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(member);
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        conv.setIsMutedAll(true);  // 全员禁言
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(memberMapper.selectList(any())).thenReturn(List.of());
+
+        PreCheckSendReq req = new PreCheckSendReq(CONV_ID, CREATOR);
+        PreCheckSendResp resp = convService.preCheckSend(req);
+
+        assertTrue(resp.isMember());
+        assertTrue(resp.isMuted(), "个人被禁言");
+        assertTrue(resp.isMutedAll(), "全员禁言");
+        assertEquals(99999L, resp.getMuteUntil());
+    }
+
+    @Test
+    void preCheckSend_convNotFound_nonCriticalSwallow() {
+        // conv 查不到时不抛异常，只 log（非关键信息，spec 第 12.2 节）
+        when(permissionChecker.getMember(CONV_ID, CREATOR))
+                .thenReturn(mockMember(CONV_ID, CREATOR, MemberRole.MEMBER));
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+        when(memberMapper.selectList(any())).thenReturn(List.of());
+
+        PreCheckSendReq req = new PreCheckSendReq(CONV_ID, CREATOR);
+        PreCheckSendResp resp = convService.preCheckSend(req);
+
+        assertTrue(resp.isMember());
+        assertEquals(0, resp.getConvType(), "conv 不存在时 convType=0");
+        assertFalse(resp.isMutedAll());
+    }
+
+    @Test
+    void updateLastMessage_convNotExist_logAndReturn() {
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+
+        // 不抛异常，仅 log
+        UpdateLastMessageReq req = new UpdateLastMessageReq(CONV_ID, 9001L, 100L, "hi");
+        convService.updateLastMessage(req);
+
+        // 不存在时不调用幂等更新
+        verify(convMapper, never()).updateLastMessageSeq(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void updateLastMessage_normal_callIdempotentUpdate() {
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        conv.setMaxSeq(50L);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(convMapper.updateLastMessageSeq(CONV_ID, 9001L, 100L, "hello"))
+                .thenReturn(1);
+
+        UpdateLastMessageReq req = new UpdateLastMessageReq(CONV_ID, 9001L, 100L, "hello");
+        convService.updateLastMessage(req);
+
+        // 验证幂等更新被调用
+        verify(convMapper).updateLastMessageSeq(CONV_ID, 9001L, 100L, "hello");
+    }
+
+    @Test
+    void updateLastMessage_seqLag_skippedByWhereClause() {
+        // seq 落后时，WHERE max_seq < #{seq} 不命中，affectedRows=0，跳过
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        conv.setMaxSeq(200L);  // 已有 maxSeq=200
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(convMapper.updateLastMessageSeq(CONV_ID, 9001L, 100L, "old"))
+                .thenReturn(0);  // 0 表示跳过
+
+        UpdateLastMessageReq req = new UpdateLastMessageReq(CONV_ID, 9001L, 100L, "old");
+        convService.updateLastMessage(req);
+
+        // 幂等更新仍被调用，但 DB 层 WHERE 不命中
+        verify(convMapper).updateLastMessageSeq(CONV_ID, 9001L, 100L, "old");
+    }
+
+    @Test
+    void markRead_callsUpsertAndPublishSpringEvent() {
+        when(snowflake.nextId()).thenReturn(7777L);
+
+        MarkReadReq req = new MarkReadReq(CREATOR, CONV_ID, 100L);
+        convService.markRead(req);
+
+        // 验证 UPSERT 已读位置
+        verify(readSeqMapper).upsertReadSeq(7777L, CONV_ID, CREATOR, 100L);
+
+        // 验证事务内只 publish Spring 内部事件
+        ArgumentCaptor<Object> evtCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(applicationEventPublisher).publishEvent(evtCaptor.capture());
+        Object published = evtCaptor.getValue();
+        assertInstanceOf(MarkReadCompletedEvent.class, published);
+        MarkReadCompletedEvent mrce = (MarkReadCompletedEvent) published;
+        assertEquals(CREATOR, mrce.getUserId());
+        assertEquals(CONV_ID, mrce.getConvId());
+        assertEquals(100L, mrce.getLastReadSeq());
+
+        // 外部系统（Redis DEL + Kafka 发事件）不在事务内执行，由 AFTER_COMMIT listener 触发
+        verify(unreadCache, never()).clearUnreadCount(anyLong(), anyLong());
+        verify(eventPublisher, never()).publishReadUpdated(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void getSettings_noRecord_returnsDefaults() {
+        when(settingsMapper.selectOne(any())).thenReturn(null);
+        when(permissionChecker.getMember(CONV_ID, CREATOR))
+                .thenReturn(mockMember(CONV_ID, CREATOR, MemberRole.MEMBER));
+
+        GetSettingsReq req = new GetSettingsReq(CREATOR, CONV_ID);
+        GetSettingsResp resp = convService.getSettings(req);
+
+        assertFalse(resp.isMuted(), "无记录默认 false");
+        assertFalse(resp.isPinned(), "无记录默认 false");
+        assertEquals("", resp.getNickname(), "无 alias 默认空字符串");
+    }
+
+    @Test
+    void getSettings_hasRecord_returnsValues() {
+        ConvSettings settings = new ConvSettings();
+        settings.setIsMuted(true);
+        settings.setIsPinned(true);
+        when(settingsMapper.selectOne(any())).thenReturn(settings);
+        ConversationMember member = mockMember(CONV_ID, CREATOR, MemberRole.MEMBER);
+        member.setAlias("我的备注");
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(member);
+
+        GetSettingsReq req = new GetSettingsReq(CREATOR, CONV_ID);
+        GetSettingsResp resp = convService.getSettings(req);
+
+        assertTrue(resp.isMuted());
+        assertTrue(resp.isPinned());
+        assertEquals("我的备注", resp.getNickname(), "nickname 来自 conv_members.alias");
+    }
+
+    @Test
+    void updateSettings_callsUpsertWithCoalesceSemantics() {
+        when(snowflake.nextId()).thenReturn(8888L);
+        // isMuted=true, isPinned=null（不更新），nickname=null
+        UpdateSettingsReq req = new UpdateSettingsReq(CREATOR, CONV_ID, true, null, null);
+
+        convService.updateSettings(req);
+
+        // UPSERT 调用：isMuted=true, isPinned=null（COALESCE 处理 null=不更新）
+        verify(settingsMapper).upsertSettings(8888L, CONV_ID, CREATOR, true, null);
+        // nickname 为 null/空时不更新 conv_members.alias
+        verify(permissionChecker, never()).getMember(anyLong(), anyLong());
+    }
+
+    @Test
+    void updateSettings_withNickname_updatesAlias() {
+        when(snowflake.nextId()).thenReturn(8889L);
+        ConversationMember member = mockMember(CONV_ID, CREATOR, MemberRole.MEMBER);
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(member);
+
+        UpdateSettingsReq req = new UpdateSettingsReq(CREATOR, CONV_ID, false, true, "新备注");
+        convService.updateSettings(req);
+
+        // 验证 UPSERT 调用
+        verify(settingsMapper).upsertSettings(8889L, CONV_ID, CREATOR, false, true);
+        // 验证 conv_members.alias 被更新
+        assertEquals("新备注", member.getAlias());
+        verify(memberMapper).updateById(member);
     }
 }
