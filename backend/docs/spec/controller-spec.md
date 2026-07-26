@@ -155,7 +155,7 @@ public Result<CreateConversationResp> create(@RequestBody CreateConversationReq 
 ```
 
 ### 4.2 全局异常处理
-每个服务一个 `@RestControllerAdvice`，放 `controller/advice/` 包：
+每个服务一个 `@RestControllerAdvice`，放 `exception/` 包（与 `controller/` 平级）：
 
 ```java
 @RestControllerAdvice
@@ -194,13 +194,13 @@ spring:
 long 类型字段（userId/messageId/conversationId）直接序列化为数字，前端 JSONbig 自动转 BigInt。
 
 ### 4.4 Controller 包结构
-每个服务新增 `controller/` 包：
+每个服务新增 `controller/` 和 `exception/` 两个平级包：
 ```
 xxx-service/src/main/java/lanshan/manmu/xxx/
 ├── controller/
-│   ├── XxxController.java        # REST 接口
-│   └── advice/
-│       └── GlobalExceptionHandler.java  # @RestControllerAdvice
+│   └── XxxController.java              # REST 接口
+├── exception/
+│   └── GlobalExceptionHandler.java     # @RestControllerAdvice
 ```
 
 ### 4.5 Controller 编码规范
@@ -234,7 +234,7 @@ xxx-service/src/main/java/lanshan/manmu/xxx/
 ### 5.2 文件清单
 - `user-service/src/main/java/lanshan/manmu/user/controller/AuthController.java`
 - `user-service/src/main/java/lanshan/manmu/user/controller/UserController.java`
-- `user-service/src/main/java/lanshan/manmu/user/controller/advice/GlobalExceptionHandler.java`
+- `user-service/src/main/java/lanshan/manmu/user/exception/GlobalExceptionHandler.java`
 
 ### 5.3 特殊处理
 - `register` / `login` / `refresh` 不需要 `X-User-Id` header（白名单）
@@ -270,7 +270,7 @@ xxx-service/src/main/java/lanshan/manmu/xxx/
 
 ### 6.2 文件清单
 - `conv-service/src/main/java/lanshan/manmu/conv/controller/ConvController.java`
-- `conv-service/src/main/java/lanshan/manmu/conv/controller/advice/GlobalExceptionHandler.java`
+- `conv-service/src/main/java/lanshan/manmu/conv/exception/GlobalExceptionHandler.java`
 
 ### 6.3 暂不暴露的接口
 属其他服务域或 Phase 2 范围：
@@ -298,7 +298,7 @@ xxx-service/src/main/java/lanshan/manmu/xxx/
 
 ### 7.2 文件清单
 - `file-service/src/main/java/lanshan/manmu/file/controller/FileController.java`
-- `file-service/src/main/java/lanshan/manmu/file/controller/advice/GlobalExceptionHandler.java`
+- `file-service/src/main/java/lanshan/manmu/file/exception/GlobalExceptionHandler.java`
 
 ---
 

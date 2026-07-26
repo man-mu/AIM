@@ -1,4 +1,4 @@
-package lanshan.manmu.file.controller.advice;
+package lanshan.manmu.user.exception;
 
 import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * file-service 全局异常处理（spec controller-spec.md §4.2）。
+ * user-service 全局异常处理（spec controller-spec.md §4.2）。
  * <p>统一将异常转换为 {@link Result} 响应体。
  */
 @RestControllerAdvice
@@ -29,7 +29,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public Result<Void> handleUnknown(Exception ex) {
-        log.error("file-service unexpected error", ex);
+        log.error("user-service unexpected error", ex);
         return Result.fail(ErrorCode.INTERNAL_ERROR);
     }
 }
