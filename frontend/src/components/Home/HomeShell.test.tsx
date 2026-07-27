@@ -1,107 +1,64 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { UserInfo } from '@/types/User/User';
-import HomeShell from './HomeShell';
+import { Avatar } from '@/components/ui/Avatar';
+import { UnreadBadge } from '@/components/ui/Badge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { Switch } from '@/components/ui/Switch';
 
-const user: UserInfo = {
-  id: '1234567890123456789',
-  username: 'zhangsan',
-  phone: '138****8000',
-  email: 'zhan****@foo.com',
-  avatar: '',
-  gender: 0,
-  bio: '',
-  birthday: 0,
-  createdAt: 0,
-  updatedAt: 0,
-  balance: 0,
-};
-
-const workspaceSlots = {
-  sidebarContent: <p>{'\u4f1a\u8bdd\u5217\u8868'}</p>,
-  chatContent: <h1>{'\u6797\u5ddd'}</h1>,
-  detailContent: <p>{'\u4f1a\u8bdd\u8be6\u60c5'}</p>,
-};
-
-describe('HomeShell', () => {
-  it('renders workspace slots and delegates logout to its callback', () => {
-    const onLogout = vi.fn();
-
-    render(
-      <HomeShell
-        user={user}
-        isUserLoading={false}
-        isLoggingOut={false}
-        isMobileChatOpen={false}
-        onLogout={onLogout}
-        {...workspaceSlots}
-      />,
-    );
-
-    const sidebar = within(screen.getByTestId('home-sidebar'));
-    const chatPanel = within(screen.getByTestId('home-chat-panel'));
-    const detailPanel = within(screen.getByTestId('home-detail-panel'));
-
-    expect(sidebar.getByText('\u4f1a\u8bdd\u5217\u8868')).toBeInTheDocument();
-    expect(chatPanel.getByRole('heading', { name: '\u6797\u5ddd' })).toBeInTheDocument();
-    expect(detailPanel.getByText('\u4f1a\u8bdd\u8be6\u60c5')).toBeInTheDocument();
-    expect(sidebar.queryByText('\u6797\u5ddd')).not.toBeInTheDocument();
-    expect(sidebar.queryByText('\u4f1a\u8bdd\u8be6\u60c5')).not.toBeInTheDocument();
-    expect(screen.getByText('zhangsan')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' }));
-
-    expect(onLogout).toHaveBeenCalledTimes(1);
+/**
+ * UI 基座组件测试。
+ * （原 HomeShell 已被 AppLayout/ConversationWorkspace 取代，
+ *  本文件转为覆盖被全应用复用的 ui 原语。）
+ */
+describe('Avatar', () => {
+  it('renders the first character when no image is provided', () => {
+    const { container } = render(<Avatar name="林川" colorKey="339394874048512101" />);
+    expect(container.textContent).toBe('林');
   });
 
-  it('uses a fixed account skeleton while profile data loads and disables a pending logout', () => {
-    render(
-      <HomeShell
-        user={null}
-        isUserLoading
-        isLoggingOut
-        isMobileChatOpen={false}
-        onLogout={vi.fn()}
-        {...workspaceSlots}
-      />,
-    );
-
-    expect(screen.getByTestId('account-skeleton')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' })).toBeDisabled();
+  it('renders an img when src exists', () => {
+    const { container } = render(<Avatar name="林川" src="data:image/png;base64,x" />);
+    expect(container.querySelector('img')).not.toBeNull();
   });
 
-  it('switches sidebar and chat visibility classes for the mobile chat state', () => {
-    const { rerender } = render(
-      <HomeShell
-        user={user}
-        isUserLoading={false}
-        isLoggingOut={false}
-        isMobileChatOpen={false}
-        onLogout={vi.fn()}
-        {...workspaceSlots}
-      />,
+  it('keeps a stable background color for the same colorKey', () => {
+    const first = render(<Avatar name="甲" colorKey="user-1" />).container.querySelector('span');
+    const second = render(<Avatar name="乙" colorKey="user-1" />).container.querySelector('span');
+    expect(first?.getAttribute('style')).toBe(second?.getAttribute('style'));
+  });
+});
+
+describe('UnreadBadge', () => {
+  it('hides at zero and caps at 99+', () => {
+    const { container: empty } = render(<UnreadBadge count={0} />);
+    expect(empty.textContent).toBe('');
+
+    render(<UnreadBadge count={120} />);
+    expect(screen.getByLabelText('未读 120 条')).toHaveTextContent('99+');
+  });
+});
+
+describe('Switch', () => {
+  it('toggles through the accessible checkbox', () => {
+    const onChange = vi.fn();
+    render(<Switch checked={false} onChange={onChange} label="置顶会话" />);
+
+    fireEvent.click(screen.getByLabelText('置顶会话'));
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('ConfirmDialog', () => {
+  it('fires onConfirm and onClose callbacks', () => {
+    const onConfirm = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ConfirmDialog open title="移出群聊" description="确定吗？" danger onConfirm={onConfirm} onClose={onClose} />,
     );
 
-    expect(screen.getByTestId('home-sidebar')).not.toHaveClass('hidden');
-    expect(screen.getByTestId('home-sidebar')).toHaveClass('flex');
-    expect(screen.getByTestId('home-chat-panel')).toHaveClass('hidden');
-    expect(screen.getByTestId('home-chat-panel')).toHaveClass('sm:flex');
-    expect(screen.getByTestId('home-detail-panel')).toHaveClass('lg:block');
-
-    rerender(
-      <HomeShell
-        user={user}
-        isUserLoading={false}
-        isLoggingOut={false}
-        isMobileChatOpen
-        onLogout={vi.fn()}
-        {...workspaceSlots}
-      />,
-    );
-
-    expect(screen.getByTestId('home-sidebar')).toHaveClass('hidden');
-    expect(screen.getByTestId('home-sidebar')).toHaveClass('sm:flex');
-    expect(screen.getByTestId('home-chat-panel')).not.toHaveClass('hidden');
-    expect(screen.getByTestId('home-chat-panel')).toHaveClass('flex');
+    fireEvent.click(screen.getByRole('button', { name: '确定' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

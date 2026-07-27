@@ -17,7 +17,7 @@ export const useUser = () => {
         },
         // 只有当 accessToken 存在时才请求
         enabled: !!storage.getAccessToken(),
-        // 缓存 5 分钟，减少不必要的请求
+        // 缓存 5 分钟，减少不必要请求
         staleTime: 5 * 60 * 1000,
         // 如果 401 或 code !== 0，不重试，直接跳登录
         retry: false,

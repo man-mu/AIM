@@ -1,407 +1,88 @@
-# AIM 前端架构设计
+# AIM 前端架构（实现态）
 
-本文档定义 AIM Phase 1 Web 客户端的前端技术选型、目录结构、状态边界和接口接入方式。目标是支撑核心 IM 能力：登录注册、会话列表、消息收发、好友/分组、通知、文件上传、WebSocket 实时事件和断线补偿同步。
+> 本文描述**当前已实现**的架构（区别于早期规划稿）。
+> 配套文档：`docs/tech-notes/01~04`（每个功能域的要点与自审记录）、`docs/data-flow.md`（数据流总览）、`docs/api-feedback.md`（接口反馈）。
 
-## 1. 技术选型
-
-### 1.1 核心栈
+## 1. 技术栈（实际使用）
 
 | 领域 | 选型 | 说明 |
 |---|---|---|
-| 包管理 | `pnpm` | 锁定依赖、安装快、适合后续 monorepo 化 |
-| 构建工具 | `Vite` | 当前脚手架已使用；开发反馈快，和 Vitest/Tailwind 集成直接 |
-| 语言 | `TypeScript` | API DTO、WebSocket 事件、Query Key、Store Slice 全部强类型 |
-| UI 框架 | `React` | 当前脚手架已使用；适合组件化 IM 工作台 |
-| 路由 | `@tanstack/react-router` | 类型安全路由、嵌套路由、路由级懒加载和 loader 能力 |
-| 服务端状态 | `@tanstack/react-query` | REST 数据缓存、分页、Mutation、失效刷新、重连后的同步补偿 |
-| 本地状态 | `zustand` | 管理会话选择、WebSocket 连接状态、草稿、临时 UI 状态 |
-| 样式 | `tailwindcss` + `@tailwindcss/vite` | 工具类样式，适合快速落地 Figma 初稿；使用 Vite 插件集成 |
+| 构建 | Vite 8 + TypeScript（**strict**） | `tsc -b` 全量类型检查参与构建 |
+| UI | React 19 + Tailwind CSS 4 | 自绘 Apple 风格组件体系（`components/ui`） |
+| 路由 | react-router v8 | 声明式路由，选中会话入 URL |
+| 服务端状态 | @tanstack/react-query v5 | 缓存/失效/乐观更新 |
+| 客户端状态 | zustand v5 | pending 队列 / 草稿 / typing / UI 状态 |
+| HTTP | axios + json-bigint(storeAsString) | Java long → 十进制字符串 |
+| antd | 仅存量登录/注册表单 + 图标 | 新 UI 不再扩大 antd 面积 |
+| 测试 | vitest + Testing Library | 纯逻辑层可脱离 DOM 在 Node 直跑 |
 
-### 1.2 建议补充
+**零新增运行时依赖**：虚拟化(content-visibility)、模态(原生 dialog)、菜单(Popover API)、Toast、
+防抖、退避、事件总线等全部手写在 `src/lib` 与 `components/ui`，并有对应单测。
 
-| 领域 | 建议 | 用途 |
-|---|---|---|
-| 表单 | `react-hook-form` + `zod` | 登录、注册、资料编辑、群设置表单；Zod 负责运行时校验和类型推导 |
-| 组件基础 | `@radix-ui/react-*` | Dialog、Dropdown、Tooltip、Popover、Tabs 等无样式可访问性组件 |
-| 样式工具 | `class-variance-authority`、`clsx`、`tailwind-merge` | Button、Input、Badge、MessageBubble 等组件变体管理 |
-| 图标 | `lucide-react` | 导航、工具栏、消息操作、文件类型图标 |
-| 虚拟列表 | `@tanstack/react-virtual` | 长会话列表、长消息历史、联系人列表性能优化 |
-| 日期时间 | `dayjs` 或 `date-fns` | epoch 毫秒时间戳格式化；优先封装在 `utils/datetime.ts` |
-| 请求模拟 | `msw` | 在后端接口不完整时做浏览器和测试环境的 API mock |
-| 单元/组件测试 | `vitest` + `@testing-library/react` | hooks、store、组件状态和 Query 行为验证 |
-| E2E 测试 | `playwright` | 登录、发消息、好友申请、文件上传等关键路径 |
-| 质量工具 | `prettier`、`lint-staged`、`husky`、`commitlint` | 统一格式、提交前检查、Conventional Commits 约束 |
+## 2. 架构原则（全部落地）
 
-暂不建议引入重型 UI 框架或 Redux Toolkit。AIM 的复杂度主要来自服务端数据、实时事件和本地交互状态，`TanStack Query + Zustand` 的边界更清晰。
+1. 服务端数据只进 Query；Zustand 只放客户端事实（乐观队列/草稿/typing/面板态）。
+2. **缓存更新纯函数化**：`modules/<域>/cache.ts` 无副作用、Node 可测；dispatcher 与 mutation 共用。
+3. API 统一解包 `Result<T>`；错误码集中映射为中文文案（`lib/errorCodes.ts`）。
+4. 实时层传输无关：`RealtimeChannel` 接口下挂 mockChannel（现在）与 wsChannel（Phase B 就绪）。
+5. 环境变量唯一入口 `config/env.ts`；核心逻辑不触碰 `import.meta`。
+6. Int64 约定：wire 层 `string|number` 联合，mapper 归一为 string，比较用 `compareInt64`。
+7. API 层不依赖 UI/路由：登录态失效仅 emit `auth:expired`，由 App 层统一提示与跳转。
 
-## 2. 架构原则
-
-1. **服务端数据不进 Zustand**：用户信息、好友列表、会话列表、消息分页、通知列表由 TanStack Query 管理。
-2. **Zustand 只放客户端事实**：当前选中会话、WebSocket 状态、输入草稿、UI 偏好、乐观发送队列。
-3. **WebSocket 事件只做派发**：实时事件进入统一 dispatcher，再更新 Query Cache 或 Zustand Slice。
-4. **API 统一解包 `Result<T>`**：组件不直接处理 `{ code, message, data }` 外壳。
-5. **接口 DTO 与 UI Model 分离**：后端字段保持原样，页面需要的派生字段在 mapper 层处理。
-6. **按业务域组织代码**：auth、conversation、message、friend、notification、file、user 独立维护 API、hooks、types 和 UI。
-7. **Phase 2 预留但不实现**：不引入 Bot/AI/知识库相关前端模块，避免污染 Phase 1 结构。
-
-## 3. 目录结构
-
-本项目不采用完整 Feature-Sliced Design 分层。AIM 当前阶段更适合常见 React 项目结构：公共能力平铺，业务域放到 `modules/`，页面只负责组装。
+## 3. 目录结构（实现态）
 
 ```text
-frontend/
-├── public/
-├── src/
-│   ├── main.tsx
-│   ├── App.tsx
-│   ├── styles/
-│   │   └── globals.css
-│   ├── routes/
-│   │   ├── router.tsx
-│   │   ├── routeTree.gen.ts
-│   │   └── guards.tsx
-│   ├── pages/
-│   │   ├── auth/
-│   │   │   ├── LoginPage.tsx
-│   │   │   └── RegisterPage.tsx
-│   │   ├── chats/
-│   │   │   ├── ChatLayout.tsx
-│   │   │   └── ChatPage.tsx
-│   │   ├── contacts/
-│   │   │   └── ContactsPage.tsx
-│   │   ├── notifications/
-│   │   │   └── NotificationsPage.tsx
-│   │   └── settings/
-│   │       └── ProfilePage.tsx
-│   ├── modules/
-│   │   ├── auth/
-│   │   ├── conversation/
-│   │   ├── message/
-│   │   ├── friend/
-│   │   ├── notification/
-│   │   ├── file/
-│   │   └── user/
-│   ├── api/
-│   │   ├── client.ts
-│   │   ├── errors.ts
-│   │   ├── result.ts
-│   │   └── queryKeys.ts
-│   ├── realtime/
-│   │   ├── wsClient.ts
-│   │   ├── wsEvents.ts
-│   │   └── wsDispatcher.ts
-│   ├── stores/
-│   │   ├── authStore.ts
-│   │   ├── workspaceStore.ts
-│   │   ├── composerStore.ts
-│   │   └── realtimeStore.ts
-│   ├── components/
-│   │   ├── ui/
-│   │   └── layout/
-│   ├── hooks/
-│   ├── utils/
-│   ├── config/
-│   ├── types/
-│   └── test/
-│       ├── mocks/
-│       └── setup.ts
-├── e2e/
-├── package.json
-└── vite.config.ts
-```
-
-业务模块推荐内部结构。模块里只放和该业务强相关的 API、类型、hooks 和组件：
-
-```text
-modules/message/
-├── api/
-│   └── messageApi.ts
-├── hooks/
-│   ├── useMessages.ts
-│   └── useSendMessage.ts
-├── types.ts
-├── schemas.ts
-├── mappers.ts
+src/
+├── app/                 # 装配层：queryClient、appBus
+├── config/env.ts        # import.meta.env 唯一入口
+├── lib/                 # 零依赖纯函数核心（全部有单测）
+│   ├── result / errorCodes / ids / datetime / emitter
+│   ├── singleFlight / backoff / clock(可注入调度) / storageKV / async
+├── apis/                # 领域 API + client(静默刷新) + queryKeys
+├── mocks/               # 浏览器内微型后端（详见 tech-notes/02）
+│   ├── engine/          # 路由匹配 + mock JWT
+│   ├── db/              # 领域数据库（八表 + 快照持久化 + 世界种子）
+│   ├── handlers/        # 七个域的“Controller”
+│   ├── platform.ts      # 网关：鉴权/异常→错误码
+│   ├── realtimeHub.ts   # NPC 剧本 + 环境活动
+│   └── index.ts         # axios adapter 装配（唯一触网层）
+├── realtime/            # protocol / channel / wsChannel / dispatcher / useRealtime
+├── stores/              # zustand：auth / workspace / pending / composer / typing / realtime
+├── modules/
+│   ├── conversation/    # model+cache+hooks+workspace+components
+│   ├── message/         # model+cache+hooks+components（乐观发送管线）
+│   ├── contacts/        # 好友/申请/分组/黑名单
+│   ├── user/            # 资料/搜索/ProfileDialog
+│   └── file/            # 三步上传 + Worker 哈希 + 图片处理
+├── workers/hash.worker.ts
 ├── components/
-│   ├── MessageList.tsx
-│   ├── MessageBubble.tsx
-│   └── MessageComposer.tsx
-└── index.ts
+│   ├── ui/              # Avatar/Badge/Dialog/Menu/Switch/Toast/…（自绘基座）
+│   └── layout/          # AppLayout + AppRail
+├── pages/               # Login/Register/Home/Contacts/Notifications
+└── router/              # 路由树 + 守卫
 ```
 
-目录职责：
-
-- `pages/`：路由页面，负责页面级布局和模块组装，不直接写复杂业务逻辑。
-- `modules/`：业务域代码，按 `auth/message/conversation/friend` 等接口域划分。
-- `api/`：全局请求客户端、统一响应解包、错误处理和 Query Key。
-- `realtime/`：WebSocket 连接、心跳、重连和事件分发。
-- `stores/`：Zustand stores，只放客户端状态。
-- `components/ui/`：无业务通用组件，如 Button、Input、Dialog、Avatar。
-- `components/layout/`：应用框架组件，如 AppShell、AppRail、Sidebar。
-- `hooks/`：跨模块通用 hooks。
-- `utils/`：日期、文件大小、ID、断言等纯函数工具。
-- `types/`：跨模块共享的基础类型。
-
-## 4. 路由设计
+## 4. 路由
 
 ```text
-/login
-/register
-/app
-/app/chats
-/app/chats/$conversationId
-/app/contacts
-/app/contacts/requests
-/app/notifications
-/app/settings/profile
+/login /register                 GuestOnly
+/home/:conversationId?           消息工作台（三栏；选中态由 URL 驱动）
+/contacts?tab=…                  联系人（懒加载）
+/notifications                   通知中心（懒加载）
 ```
 
-路由约束：
+## 5. 双环境验证体系
 
-- 登录态路由统一挂在 `/app` layout 下。
-- `/login`、`/register` 进入前检查已有 token，有效则跳转 `/app/chats`。
-- `/app/chats/$conversationId` 的 `conversationId` 来自 URL，便于刷新恢复和分享定位。
-- 会话筛选、消息搜索、通知筛选使用 URL Search Params，避免刷新丢状态。
-
-## 5. API 接入层
-
-所有 REST 请求经过 `src/api/client.ts`：
-
-```ts
-type ApiResult<T> = {
-  code: number
-  message: string
-  data: T | null
-}
-```
-
-请求层职责：
-
-- 自动拼接 `VITE_API_BASE_URL=/api/v1`。
-- 登录后注入 `Authorization: Bearer <access_token>`。
-- 统一解析 `Result<T>`，`code !== 0` 时抛出 `ApiError`。
-- 按错误码段映射业务域：`10xxx=user`、`20xxx=friend`、`30xxx=conversation`、`40xxx=message`、`50xxx=file`、`60xxx=notification/signaling`。
-- 遇到 `401` 或 `10005/10006`，清理会话并跳转登录。
-- 支持 `AbortSignal`，让 Query 在路由切换时可以取消请求。
-
-文件上传按后端流程拆三步：
-
-1. `POST /files/upload-url` 获取预签名 URL。
-2. 使用 `XMLHttpRequest` 或带进度能力的请求工具 `PUT` 二进制文件。
-3. `POST /files/confirm` 确认上传，再把 `FileInfo` 作为消息附件发送。
-
-## 6. 状态边界
-
-### 6.1 TanStack Query 管理
-
-- `useCurrentUserQuery`
-- `useFriendListQuery`
-- `useFriendRequestsQuery`
-- `useConversationListInfiniteQuery`
-- `useConversationDetailQuery`
-- `useMessagesInfiniteQuery`
-- `useNotificationsQuery`
-- `useUnreadNotificationCountQuery`
-- `useFileInfoQuery`
-
-Query Key 约定：
-
-```ts
-const queryKeys = {
-  me: ['user', 'me'],
-  conversations: {
-    list: (filter) => ['conversations', 'list', filter],
-    detail: (id) => ['conversations', 'detail', id],
-  },
-  messages: {
-    pages: (conversationId, filter) => ['messages', conversationId, 'pages', filter],
-    detail: (messageId) => ['messages', 'detail', messageId],
-  },
-}
-```
-
-### 6.2 Zustand 管理
-
-建议拆成 slices：
-
-- `authSlice`：accessToken、userId、deviceId、登录状态。当前 v1 文档没有开放 refresh 接口，`401` 后直接登出。
-- `workspaceSlice`：当前侧边栏 tab、当前选中会话、右侧详情面板开关。
-- `composerSlice`：每个 `conversationId` 的草稿、引用消息、上传中附件。
-- `realtimeSlice`：WebSocket 连接状态、重连次数、最后心跳时间、订阅的 presence 用户。
-- `uiSlice`：主题、紧凑模式、全局 toast/dialog 状态。
-
-需要持久化的状态仅限 token、deviceId、轻量 UI 偏好和草稿。消息历史、好友列表、通知列表不持久化到 Zustand。
-
-## 7. WebSocket 实时架构
-
-连接地址：
-
-```text
-ws://{host}:8081/ws?token=<access_token>&device_id=<deviceId>
-```
-
-模块划分：
-
-```text
-src/realtime/
-├── wsClient.ts        # 连接、心跳、重连、send
-├── wsEvents.ts        # 上下行 event 类型
-├── wsDispatcher.ts    # 事件派发到 Query/Zustand
-└── useRealtime.ts     # 登录态下启动/关闭连接
-```
-
-处理规则：
-
-- 登录成功后连接 WebSocket，登出时关闭连接。
-- 每 30 秒发送 `ping`，90 秒无响应视为断线。
-- 断线后指数退避重连；重连成功后调用 `/messages/{conversationId}/sync?fromSeq=...` 补拉遗漏消息。
-- `message.new`：写入当前会话消息缓存；如果不是当前会话，更新会话列表未读数。
-- `message.recalled` / `message.edited`：更新对应消息缓存。
-- `presence`：更新 presence slice，不放进 Query。
-- `typing` / `typing.stop`：短时 UI 状态，使用过期时间自动清理。
-- `read_sync` / `read_receipt`：更新会话 `lastReadSeq` 和消息已读状态。
-
-## 8. 页面与组件拆分
-
-### 8.1 主工作台
-
-```text
-WorkspaceLayout
-├── AppRail
-├── ConversationSidebar
-│   ├── ConversationSearch
-│   ├── ConversationFilterTabs
-│   └── ConversationList
-├── ChatPanel
-│   ├── ChatHeader
-│   ├── MessageList
-│   └── MessageComposer
-└── ConversationDetailPanel
-    ├── GroupSummary
-    ├── ConversationSettings
-    ├── MemberList
-    └── PermissionActions
-```
-
-### 8.2 好友与通知
-
-```text
-ContactsPage
-├── ContactNav
-├── FriendList
-├── FriendRequestTabs
-├── FriendGroupManager
-├── BlacklistPanel
-└── NotificationPanel
-```
-
-### 8.3 登录与资料
-
-```text
-AuthLayout
-├── LoginForm
-├── RegisterForm
-└── ProfileForm
-```
-
-组件策略：
-
-- `components/ui` 只放通用无业务组件：`Button`、`Input`、`Badge`、`Avatar`、`Dialog`、`Tabs`、`Spinner`。
-- 业务组件放各自 `modules/*/components` 下，不把业务字段塞进通用组件。
-- 消息类型组件按 `msgType` 拆分：`TextMessage`、`ImageMessage`、`FileMessage`、`VoiceMessage`、`VideoMessage`、`LocationMessage`、`SystemMessage`。
-
-## 9. 数据类型与校验
-
-接口 DTO 先按文档手写，后续如后端提供 OpenAPI，再切到代码生成。
-
-建议规则：
-
-- `*.types.ts`：接口 DTO 和 UI Model 类型。
-- `*.schemas.ts`：Zod schema，校验登录、注册、发消息、资料更新等入参。
-- `*.mappers.ts`：DTO → UI Model，比如时间格式、消息预览、在线状态文案。
-- `*.queries.ts`：Query hooks 和 mutation hooks。
-
-Long ID 统一用 `string` 承接，避免 JavaScript `number` 精度问题。接口文档中 `userId`、`conversationId`、`messageId` 都可能超过安全整数范围，前端展示和传参不做数值运算。
-
-## 10. 工程化规范
-
-建议脚本：
-
-```json
-{
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "typecheck": "tsc -b --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "e2e": "playwright test"
-  }
-}
-```
-
-环境变量：
-
-```text
-VITE_API_BASE_URL=http://localhost:8080/api/v1
-VITE_WS_URL=ws://localhost:8081/ws
-VITE_APP_ENV=local
-```
-
-CI 检查顺序：
-
-1. `pnpm install --frozen-lockfile`
-2. `pnpm lint`
-3. `pnpm typecheck`
-4. `pnpm test`
-5. `pnpm build`
-6. `pnpm e2e`（可在后端和基础设施可用时启用）
-
-## 11. 测试策略
-
-| 层级 | 工具 | 覆盖目标 |
+| 层 | 验证方式 | 位置 |
 |---|---|---|
-| 单元测试 | Vitest | mapper、query key、错误码映射、Zustand slice |
-| 组件测试 | Vitest + Testing Library | 表单校验、消息气泡、会话列表、权限按钮状态 |
-| API Mock | MSW | 登录、会话列表、消息分页、通知列表、文件上传 URL |
-| E2E | Playwright | 登录 → 进入会话 → 发送消息 → 收到实时事件 → 标记已读 |
+| 纯逻辑（lib/mocks/cache/dispatcher/wsChannel） | Node 直跑单测（81 项） | `*.test.ts` |
+| 类型正确性 | `tsc --noEmit`（strict） | 全仓 |
+| React 组件/hooks | vitest + jsdom（本地 `pnpm test`） | `*.test.tsx` |
 
-优先测试高风险路径：登录鉴权、消息发送幂等、断线重连补偿、撤回/编辑 120 秒限制、文件上传确认。
+纯逻辑与 React 绑定的分离不是偶然——它让核心正确性可以在任何环境（CI、无头容器）被廉价验证。
 
-## 12. 性能与体验
+## 6. Mock ↔ 真后端切换
 
-- 消息列表和会话列表使用虚拟滚动。
-- 消息分页采用 `useInfiniteQuery`，滚动到顶部加载更早消息。
-- 会话切换预取最近一页消息。
-- 图片消息使用缩略图，原图懒加载。
-- 输入中事件节流发送，停止输入延迟触发 `typing_stop`。
-- 乐观发送消息：先展示本地 pending，服务端返回 `messageId/seq` 后替换；重复消息 `40004` 时回收本地状态。
-- 大文件上传支持进度、取消和失败重试。
-
-## 13. 落地顺序
-
-1. 安装基础依赖：TanStack Router/Query、Zustand、Tailwind、Zod、React Hook Form、Radix、Lucide。
-2. 清理 Vite 默认模板，建立 `routes/pages/modules/components/stores/api` 目录。
-3. 建立 API Client、`Result<T>` 解包、错误码映射和 QueryProvider。
-4. 实现 Auth：登录、注册、登出、路由守卫。
-5. 实现主工作台骨架：AppRail、会话列表、聊天面板、详情面板。
-6. 接入消息分页、发送、撤回、编辑、删除和引用回复。
-7. 接入 WebSocket：心跳、重连、事件分发、增量同步。
-8. 实现好友、分组、申请、黑名单和通知页面。
-9. 接入文件上传流程。
-10. 补齐测试、Mock、CI 和构建检查。
-
-## 14. 参考资料
-
-- TanStack Query React Docs: https://tanstack.com/query/latest/docs/framework/react/overview
-- TanStack Router Docs: https://tanstack.com/router/latest/docs/overview
-- Zustand TypeScript Guide: https://zustand.docs.pmnd.rs/learn/guides/beginner-typescript
-- Tailwind CSS with Vite: https://tailwindcss.com/docs
-- React Hook Form: https://react-hook-form.com/get-started
-- Zod: https://zod.dev/
-- Vitest: https://vitest.dev/guide/
-- Playwright: https://playwright.dev/docs/intro
-- MSW: https://mswjs.io/docs/
+`.env` 设 `VITE_USE_MOCK=false` 即直连网关（默认 `http://localhost:9080/api/v1`）。
+mock 未命中的路由自动走真实网络，支持逐接口灰度。演示账号：`admin/admin123`、`test/test123`；
+NPC 密码均为 `123456`。Phase B 后端就绪清单：ws-gateway 上线 → `realtime/index.ts` 工厂自动切 wsChannel（含心跳/重连/sync 补偿接口已就绪）。

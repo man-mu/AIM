@@ -1,108 +1,63 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { UserInfo } from '@/types/User/User';
+import { useAuthStore } from '@/stores/useAuthStore';
 
-interface HomeMocks {
-  localLogoutMutate: ReturnType<typeof vi.fn>;
-  cachedUser: UserInfo | null;
-  profileData: UserInfo | undefined;
-  isUserLoading: boolean;
-  isLoggingOut: boolean;
-}
-
-const homeMocks = vi.hoisted<HomeMocks>(() => ({
-  localLogoutMutate: vi.fn(),
-  cachedUser: {
-    id: '1234567890123456789',
-    username: 'cached-user',
-    phone: '138****8000',
-    email: 'cached@example.com',
-    avatar: '',
-    gender: 0,
-    bio: '',
-    birthday: 0,
-    createdAt: 0,
-    updatedAt: 0,
-    balance: 0,
-  },
-  profileData: undefined,
-  isUserLoading: false,
-  isLoggingOut: false,
+/** Home 页 smoke：路由挂载 → 工作台三区骨架渲染。 */
+const convApiMock = vi.hoisted(() => ({
+  list: vi.fn(),
+  getSettings: vi.fn(),
+  getMembers: vi.fn(),
+  getDetail: vi.fn(),
+  markRead: vi.fn(),
+  create: vi.fn(),
 }));
+const messageApiMock = vi.hoisted(() => ({ list: vi.fn(), send: vi.fn() }));
 
-vi.mock('@/hooks/useUser', () => ({
-  useUser: () => ({ data: homeMocks.profileData, isLoading: homeMocks.isUserLoading }),
-}));
-
-vi.mock('@/hooks/useAuth', () => ({
-  useLocalLogout: () => ({ mutate: homeMocks.localLogoutMutate, isPending: homeMocks.isLoggingOut }),
-}));
-
-vi.mock('@/stores/useAuthStore', () => ({
-  useAuthStore: (selector: (state: { user: UserInfo | null }) => unknown) =>
-    selector({ user: homeMocks.cachedUser }),
-}));
+vi.mock('@/apis/conv', () => ({ convApi: convApiMock }));
+vi.mock('@/apis/message', () => ({ messageApi: messageApiMock }));
 
 import Home from './index';
 
-const cachedUser: UserInfo = {
-  id: '1234567890123456789',
-  username: 'cached-user',
-  phone: '138****8000',
-  email: 'cached@example.com',
-  avatar: '',
-  gender: 0,
-  bio: '',
-  birthday: 0,
-  createdAt: 0,
-  updatedAt: 0,
-  balance: 0,
-};
-
-describe('Home', () => {
+describe('Home page', () => {
   beforeEach(() => {
-    homeMocks.localLogoutMutate.mockReset();
-    homeMocks.cachedUser = cachedUser;
-    homeMocks.profileData = undefined;
-    homeMocks.isUserLoading = false;
-    homeMocks.isLoggingOut = false;
+    vi.clearAllMocks();
+    useAuthStore.setState({
+      isLogin: true,
+      user: {
+        id: '1001',
+        username: '我自己',
+        phone: '',
+        email: '',
+        avatar: '',
+        gender: 0,
+        bio: '',
+        birthday: 0,
+        createdAt: 0,
+        updatedAt: 0,
+        balance: '0',
+      },
+    });
+    convApiMock.list.mockResolvedValue({ conversations: [], total: 0 });
   });
 
-  it('uses the cached user and delegates logout to the local action', () => {
-    render(<Home />);
+  it('renders workspace skeleton with sidebar and empty chat state', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <QueryClientProvider client={queryClient}>
+          <Routes>
+            <Route path="home" element={<Home />}>
+              <Route index element={null} />
+            </Route>
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
 
-    expect(screen.getByText('cached-user')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /\u6797\u5ddd/ })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' }));
-
-    expect(homeMocks.localLogoutMutate).toHaveBeenCalledTimes(1);
-  });
-
-  it('starts local logout only once before mutation state updates', () => {
-    render(<Home />);
-
-    const logoutButton = screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' });
-    fireEvent.click(logoutButton);
-    fireEvent.click(logoutButton);
-
-    expect(homeMocks.localLogoutMutate).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows an account skeleton when profile data loads without a cached user', () => {
-    homeMocks.cachedUser = null;
-    homeMocks.isUserLoading = true;
-
-    render(<Home />);
-
-    expect(screen.getByTestId('account-skeleton')).toBeInTheDocument();
-  });
-
-  it('disables logout when the local mutation is pending', () => {
-    homeMocks.isLoggingOut = true;
-
-    render(<Home />);
-
-    expect(screen.getByRole('button', { name: '\u9000\u51fa\u767b\u5f55' })).toBeDisabled();
+    expect(screen.getByTestId('conversation-sidebar')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('选择一个会话开始聊天')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('暂无会话')).toBeInTheDocument());
   });
 });

@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { authApi } from '@/apis/auth.ts';
+import { toast } from '@/components/ui/toast/toastBus';
 import { useAuthStore } from '@/stores/useAuthStore.ts';
-import type { LoginParams, LogoutParams, RegisterParams } from '@/types/Auth/Auth.ts';
+import type { LoginParams, RegisterParams } from '@/types/Auth/Auth.ts';
 import { establishAuthSession } from '@/utils/authSession';
 import { storage } from '@/utils/storage.ts';
 
@@ -23,7 +24,7 @@ export const useLogin = () => {
       navigate('/home', { replace: true });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, '登录失败，请稍后重试'));
+      toast.error(getErrorMessage(error, '登录失败，请稍后重试'));
     },
   });
 };
@@ -41,7 +42,7 @@ export const useRegister = () => {
       navigate('/home', { replace: true });
     },
     onError: (error) => {
-      alert(getErrorMessage(error, '注册失败，请稍后重试'));
+      toast.error(getErrorMessage(error, '注册失败，请稍后重试'));
     },
   });
 };
@@ -59,6 +60,7 @@ function useClearLocalSession() {
   };
 }
 
+/** 仅清理本地会话（不调服务端），异常兜底场景使用。 */
 export const useLocalLogout = () => {
   const clearLocalSession = useClearLocalSession();
 
@@ -66,17 +68,32 @@ export const useLocalLogout = () => {
     mutationFn: async () => undefined,
     onSuccess: () => {
       clearLocalSession();
-      alert('\u5df2\u9000\u51fa\u767b\u5f55');
+      toast.success('已退出登录');
     },
   });
 };
 
+/**
+ * 标准登出：吊销服务端 refreshToken，无论成败都清理本地会话。
+ */
 export const useLogout = () => {
   const clearLocalSession = useClearLocalSession();
 
   return useMutation({
-    mutationFn: (params: LogoutParams) => authApi.logout(params),
-    onSuccess: clearLocalSession,
-    onError: clearLocalSession,
+    mutationFn: async () => {
+      const refreshToken = storage.getRefreshToken();
+      if (refreshToken) {
+        await authApi.logout({ refreshToken });
+      }
+    },
+    onSuccess: () => {
+      clearLocalSession();
+      toast.success('已退出登录');
+    },
+    onError: () => {
+      // 服务端吊销失败不阻塞本地登出。
+      clearLocalSession();
+      toast.success('已退出登录');
+    },
   });
 };

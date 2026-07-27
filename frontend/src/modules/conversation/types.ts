@@ -1,30 +1,6 @@
-export type ConversationType = 'direct' | 'group';
-
-export interface ConversationSummary {
-  id: string;
-  type: ConversationType;
-  name: string;
-  avatar: string;
-  memberCount: number;
-  presence: 'online' | 'offline' | null;
-  announcement: string;
-  lastMessagePreview: string;
-  lastMessageAt: number;
-  unreadCount: number;
-  isPinned: boolean;
-}
-
-export interface TextMessage {
-  id: string;
-  clientMsgId: string;
-  conversationId: string;
-  seq: string | null;
-  senderId: string;
-  senderName: string;
-  direction: 'incoming' | 'outgoing';
-  msgType: 1;
-  content: { text: string };
-  createdAt: number;
-}
-
-export type MessagesByConversation = Record<string, TextMessage[]>;
+/**
+ * @deprecated 本地演示类型已由 UI 模型取代：见 ./model.ts（UiConversation/UiMember）
+ * 与 @/modules/message/model.ts（UiMessage）。本文件保留仅为兼容历史引用。
+ * （清理脚本见 scripts/cleanup-obsolete.md）
+ */
+export type { UiConversation, UiMember } from './model';

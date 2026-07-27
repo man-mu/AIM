@@ -1,259 +1,209 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { ChatPanel } from './components/ChatPanel';
-import { ConversationDetailPanel } from './components/ConversationDetailPanel';
-import { ConversationList } from './components/ConversationList';
-import {
-  LocalConversationProvider,
-  useLocalConversation,
-} from './LocalConversationProvider';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConversationDTO } from '@/types/Conversation/Conversation';
+import type { ListMessagesData } from '@/types/Message/Message';
+import { useAuthStore } from '@/stores/useAuthStore';
+import { useWorkspaceStore } from '@/stores/useWorkspaceStore';
 
-function ConversationWorkspaceProbe() {
-  const {
-    activeConversation,
-    activeMessages,
-    conversations,
-    isMobileChatOpen,
-    returnToConversationList,
-    selectConversation,
-    sendTextMessage,
-  } = useLocalConversation();
+/**
+ * 工作台集成测试：在 apis 层打桩（与真实/mock 后端同一契约），
+ * 验证「列表加载 → 选中会话 → 历史渲染 → 乐观发送 → 自动已读」的数据流闭环。
+ */
+const convApiMock = vi.hoisted(() => ({
+  list: vi.fn(),
+  getSettings: vi.fn(),
+  getMembers: vi.fn(),
+  getDetail: vi.fn(),
+  markRead: vi.fn(),
+  create: vi.fn(),
+  invite: vi.fn(),
+  kick: vi.fn(),
+  muteMember: vi.fn(),
+  unmuteMember: vi.fn(),
+  transferOwner: vi.fn(),
+  setAnnouncement: vi.fn(),
+  deleteAnnouncement: vi.fn(),
+  updateSettings: vi.fn(),
+}));
+const messageApiMock = vi.hoisted(() => ({
+  list: vi.fn(),
+  send: vi.fn(),
+  sync: vi.fn(),
+  recall: vi.fn(),
+  edit: vi.fn(),
+  delete: vi.fn(),
+}));
 
-  return (
-    <>
-      <p data-testid="active-name">{activeConversation.name}</p>
-      <p data-testid="active-unread">{activeConversation.unreadCount}</p>
-      <p data-testid="active-preview">{activeConversation.lastMessagePreview}</p>
-      <p data-testid="message-count">{activeMessages.length}</p>
-      <p data-testid="latest-local-messages">{JSON.stringify(activeMessages.slice(-2))}</p>
-      <p data-testid="mobile-chat-open">{String(isMobileChatOpen)}</p>
-      <button type="button" onClick={() => selectConversation('conv-weekend')}>
-        {'\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a'}
-      </button>
-      <button type="button" onClick={returnToConversationList}>
-        {'\u8fd4\u56de\u5217\u8868'}
-      </button>
-      <button type="button" onClick={() => sendTextMessage('\u672c\u5730\u6d88\u606f')}>
-        {'\u53d1\u9001\u672c\u5730\u6d88\u606f'}
-      </button>
-      <button type="button" onClick={() => sendTextMessage('  \u7b2c\u4e00\u884c\n\u7b2c\u4e8c\u884c  ')}>
-        {'\u53d1\u9001\u591a\u884c\u6d88\u606f'}
-      </button>
-      <button type="button" onClick={() => sendTextMessage('  \u6700\u540e\u4e00\u6761  ')}>
-        {'\u53d1\u9001\u6700\u540e\u6d88\u606f'}
-      </button>
-      <button type="button" onClick={() => sendTextMessage('  \n  ')}>
-        {'\u53d1\u9001\u7a7a\u767d\u6d88\u606f'}
-      </button>
-      <p data-testid="weekend-unread">
-        {conversations.find((conversation) => conversation.id === 'conv-weekend')?.unreadCount}
-      </p>
-    </>
-  );
+vi.mock('@/apis/conv', () => ({ convApi: convApiMock }));
+vi.mock('@/apis/message', () => ({ messageApi: messageApiMock }));
+
+import { ConversationWorkspace } from './ConversationWorkspace';
+
+const ME = {
+  id: '1001',
+  username: '我自己',
+  phone: '',
+  email: '',
+  avatar: '',
+  gender: 0 as const,
+  bio: '',
+  birthday: 0,
+  createdAt: 0,
+  updatedAt: 0,
+  balance: '0',
+};
+
+function conversationDto(overrides: Partial<ConversationDTO>): ConversationDTO {
+  return {
+    id: 'c1',
+    type: 2,
+    name: '评审组',
+    avatar: '',
+    ownerId: '1001',
+    memberCount: 3,
+    maxSeq: 2,
+    lastMessageId: 'm2',
+    lastMessagePreview: '第二条',
+    announcement: '',
+    isMutedAll: false,
+    createdAt: 1,
+    updatedAt: 2000,
+    unreadCount: 1,
+    ...overrides,
+  };
 }
 
-function renderWorkspace() {
+function messagesPage(): ListMessagesData {
+  return {
+    list: [
+      {
+        messageId: 'm2',
+        conversationId: 'c1',
+        seq: 2,
+        fromUserId: 'npc1',
+        msgType: 1,
+        status: 1,
+        content: { text: '第二条' },
+        replyToId: '0',
+        replyToPreview: '',
+        editCount: 0,
+        editedAt: 0,
+        createdAt: 1800,
+      },
+      {
+        messageId: 'm1',
+        conversationId: 'c1',
+        seq: 1,
+        fromUserId: '1001',
+        msgType: 1,
+        status: 1,
+        content: { text: '第一条' },
+        replyToId: '0',
+        replyToPreview: '',
+        editCount: 0,
+        editedAt: 0,
+        createdAt: 1000,
+      },
+    ],
+    nextCursor: null,
+    hasMore: false,
+    total: 2,
+  };
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname}</output>;
+}
+
+function renderWorkspace(initialPath = '/home') {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <LocalConversationProvider>
-      <ConversationWorkspaceProbe />
-    </LocalConversationProvider>,
+    <MemoryRouter initialEntries={[initialPath]}>
+      <QueryClientProvider client={queryClient}>
+        <Routes>
+          <Route path="home" element={<ConversationWorkspace />}>
+            <Route index element={null} />
+            <Route path=":conversationId" element={null} />
+          </Route>
+        </Routes>
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
-function MobileChatOpenProbe() {
-  const { isMobileChatOpen } = useLocalConversation();
+describe('ConversationWorkspace 数据流', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAuthStore.setState({ isLogin: true, user: ME });
+    useWorkspaceStore.setState({ isDetailPanelOpen: true, isMobileChatOpen: false, isCreateDialogOpen: false });
 
-  return <p data-testid="mobile-chat-open">{String(isMobileChatOpen)}</p>;
-}
-
-function renderConversationWorkspace() {
-  return render(
-    <LocalConversationProvider>
-      <ConversationList />
-      <ChatPanel />
-      <ConversationDetailPanel />
-      <MobileChatOpenProbe />
-    </LocalConversationProvider>,
-  );
-}
-
-describe('LocalConversationProvider', () => {
-  it('selects the weekend book club, clears its unread count, and opens mobile chat', () => {
-    renderWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a' }));
-
-    expect(screen.getByTestId('active-name')).toHaveTextContent('\u5468\u672b\u8bfb\u4e66\u4f1a');
-    expect(screen.getByTestId('active-unread')).toHaveTextContent('0');
-    expect(screen.getByTestId('weekend-unread')).toHaveTextContent('0');
-    expect(screen.getByTestId('mobile-chat-open')).toHaveTextContent('true');
-  });
-
-  it('updates the active conversation preview when sending local text', () => {
-    renderWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a' }));
-    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001\u672c\u5730\u6d88\u606f' }));
-
-    expect(screen.getByTestId('active-preview')).toHaveTextContent('\u672c\u5730\u6d88\u606f');
-    expect(screen.getByTestId('message-count')).toHaveTextContent('2');
-  });
-
-  it('keeps local pending messages distinct and preserves their original text', () => {
-    const dateNow = vi.spyOn(Date, 'now').mockReturnValue(1_770_000_200_000);
-    renderWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001\u591a\u884c\u6d88\u606f' }));
-    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001\u6700\u540e\u6d88\u606f' }));
-
-    const messages = JSON.parse(screen.getByTestId('latest-local-messages').textContent ?? '[]') as Array<{
-      id: string;
-      clientMsgId: string;
-      conversationId: string;
-      seq: string | null;
-      content: { text: string };
-    }>;
-
-    expect(messages).toHaveLength(2);
-    expect(messages.map((message) => message.id)).toEqual([
-      'local-1770000200000-1',
-      'local-1770000200000-2',
-    ]);
-    expect(new Set(messages.map((message) => message.clientMsgId)).size).toBe(2);
-    expect(messages.every((message) => message.id.startsWith('local-'))).toBe(true);
-    expect(messages.every((message) => message.clientMsgId.startsWith('local-'))).toBe(true);
-    expect(messages.every((message) => message.conversationId === 'conv-linchuan')).toBe(true);
-    expect(messages.every((message) => message.seq === null)).toBe(true);
-    expect(messages[0]?.content.text).toBe('  \u7b2c\u4e00\u884c\n\u7b2c\u4e8c\u884c  ');
-    expect(screen.getByTestId('active-preview').textContent).toBe('\u6700\u540e\u4e00\u6761');
-
-    dateNow.mockRestore();
-  });
-
-  it('leaves the active messages and preview unchanged for blank text', () => {
-    renderWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a' }));
-    const initialMessageCount = screen.getByTestId('message-count').textContent;
-    const initialPreview = screen.getByTestId('active-preview').textContent;
-    fireEvent.click(screen.getByRole('button', { name: '\u53d1\u9001\u7a7a\u767d\u6d88\u606f' }));
-
-    expect(screen.getByTestId('message-count')).toHaveTextContent(initialMessageCount ?? '');
-    expect(screen.getByTestId('active-preview')).toHaveTextContent(initialPreview ?? '');
-  });
-
-  it('closes the mobile chat when returning to the conversation list', () => {
-    renderWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: '\u9009\u62e9\u5468\u672b\u8bfb\u4e66\u4f1a' }));
-    fireEvent.click(screen.getByRole('button', { name: '\u8fd4\u56de\u5217\u8868' }));
-
-    expect(screen.getByTestId('mobile-chat-open')).toHaveTextContent('false');
-  });
-});
-
-describe('Conversation workspace components', () => {
-  it('selects the book club, clears its unread badge, and updates its detail panel', () => {
-    renderConversationWorkspace();
-
-    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
-
-    expect(
-      within(screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55')).getByText('\u6b22\u8fce\u52a0\u5165\u672c\u5468\u7684\u8bfb\u4e66\u4f1a\u3002'),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText('\u672a\u8bfb 2 \u6761')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '\u5468\u672b\u8bfb\u4e66\u4f1a' })).toBeInTheDocument();
-    expect(within(screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5')).getByText('3 \u4f4d\u6210\u5458')).toBeInTheDocument();
-  });
-
-  it('sends a message with Enter, updates the preview, and clears the composer', () => {
-    renderConversationWorkspace();
-    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
-
-    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
-    const messageCount = messageList.querySelectorAll('article').length;
-    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
-    fireEvent.change(composer, { target: { value: '\u4eca\u665a\u89c1' } });
-    const enterEvent = new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      code: 'Enter',
-      key: 'Enter',
+    convApiMock.list.mockResolvedValue({ conversations: [conversationDto({})], total: 1 });
+    convApiMock.getSettings.mockResolvedValue({ isMuted: false, isPinned: false, nickname: '' });
+    convApiMock.getMembers.mockResolvedValue({
+      members: [
+        { userId: '1001', username: '我自己', avatar: '', role: 1, alias: '', joinedAt: 1, lastReadSeq: 2, isMuted: false, muteUntil: 0, memberType: 1, botId: '0' },
+        { userId: 'npc1', username: '林川', avatar: '', role: 0, alias: '', joinedAt: 1, lastReadSeq: 2, isMuted: false, muteUntil: 0, memberType: 1, botId: '0' },
+      ],
+      total: 2,
     });
-    fireEvent(composer, enterEvent);
-
-    expect(enterEvent.defaultPrevented).toBe(true);
-    expect(messageList.querySelectorAll('article')).toHaveLength(messageCount + 1);
-    expect(within(messageList).getAllByText('\u4eca\u665a\u89c1')).toHaveLength(1);
-    expect(within(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ })).getByText('\u4eca\u665a\u89c1')).toBeInTheDocument();
-    expect(composer).toHaveValue('');
+    convApiMock.markRead.mockResolvedValue(undefined);
+    messageApiMock.list.mockResolvedValue(messagesPage());
+    messageApiMock.send.mockResolvedValue({ messageId: 'm3', seq: 3, createdAt: 2500 });
   });
 
-  it('keeps a newline in the composer when Shift+Enter is pressed', () => {
-    renderConversationWorkspace();
-
-    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
-    const messageCount = messageList.querySelectorAll('article').length;
-    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
-    fireEvent.change(composer, { target: { value: '\u7b2c\u4e00\u884c' } });
-    const shiftEnterEvent = new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      code: 'Enter',
-      key: 'Enter',
-      shiftKey: true,
-    });
-    fireEvent(composer, shiftEnterEvent);
-    expect(shiftEnterEvent.defaultPrevented).toBe(false);
-    fireEvent.change(composer, { target: { value: '\u7b2c\u4e00\u884c\n' } });
-
-    expect(composer).toHaveValue('\u7b2c\u4e00\u884c\n');
-    expect(messageList.querySelectorAll('article')).toHaveLength(messageCount);
+  it('renders the conversation list with preview and unread badge', async () => {
+    renderWorkspace();
+    const sidebar = await screen.findByTestId('conversation-sidebar');
+    await waitFor(() => expect(within(sidebar).getByText('评审组')).toBeInTheDocument());
+    expect(within(sidebar).getByText('第二条')).toBeInTheDocument();
+    expect(within(sidebar).getByLabelText('未读 1 条')).toBeInTheDocument();
   });
 
-  it('provides wrapping constraints for long message tokens and group announcements', () => {
-    renderConversationWorkspace();
-    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
+  it('selecting a conversation routes to /home/:id and renders history', async () => {
+    renderWorkspace();
+    const sidebar = await screen.findByTestId('conversation-sidebar');
+    await waitFor(() => expect(within(sidebar).getByText('评审组')).toBeInTheDocument());
 
-    const messageBubble = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55').querySelector('article > p');
-    const announcement = within(screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5')).getByText('\u6bcf\u5468\u516d\u4e0b\u5348\u5171\u8bfb\u3002');
+    fireEvent.click(within(sidebar).getByText('评审组'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/home/c1'));
 
-    expect(messageBubble).toHaveClass('min-w-0', 'break-words');
-    expect(announcement).toHaveClass('min-w-0', 'break-words');
+    await waitFor(() => expect(screen.getByText('第一条')).toBeInTheDocument());
+    expect(screen.getByText('第二条')).toBeInTheDocument();
+    // 群聊中他人消息展示发送者名。
+    expect(screen.getAllByText('林川').length).toBeGreaterThan(0);
   });
 
-  it('falls back from a whitespace avatar to the conversation name initial', () => {
-    renderConversationWorkspace();
+  it('sends a message optimistically and reconciles with the server ack', async () => {
+    renderWorkspace('/home/c1');
+    await waitFor(() => expect(screen.getByText('第二条')).toBeInTheDocument());
 
-    const listAvatar = screen
-      .getByLabelText('\u4f1a\u8bdd\u5217\u8868')
-      .querySelector('button[aria-current="true"] > span');
-    const detailAvatar = screen.getByLabelText('\u4f1a\u8bdd\u8be6\u60c5').querySelector('div > span');
+    const input = screen.getByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '新消息内容' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(listAvatar).toHaveTextContent('\u6797');
-    expect(detailAvatar).toHaveTextContent('\u6797');
+    // 乐观气泡立即出现。
+    await waitFor(() => expect(screen.getByText('新消息内容')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(messageApiMock.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationId: 'c1',
+          msgType: 1,
+          content: { text: '新消息内容' },
+          clientMsgId: expect.stringContaining('c-'),
+        }),
+      ),
+    );
+    // 服务端确认后消息仍在（占位 → 正式）。
+    await waitFor(() => expect(screen.getByText('新消息内容')).toBeInTheDocument());
   });
 
-  it('disables blank sends and does not add a message on form submit', () => {
-    renderConversationWorkspace();
-
-    const messageList = screen.getByLabelText('\u6d88\u606f\u8bb0\u5f55');
-    const messageCount = messageList.querySelectorAll('li').length;
-    const composer = screen.getByRole('textbox', { name: '\u8f93\u5165\u6d88\u606f' });
-    fireEvent.change(composer, { target: { value: '  \n  ' } });
-
-    expect(screen.getByRole('button', { name: '\u53d1\u9001\u6d88\u606f' })).toBeDisabled();
-    fireEvent.submit(composer.closest('form') as HTMLFormElement);
-
-    expect(messageList.querySelectorAll('li')).toHaveLength(messageCount);
-  });
-
-  it('returns to the conversation list from the mobile back icon', () => {
-    renderConversationWorkspace();
-    fireEvent.click(screen.getByRole('button', { name: /\u5468\u672b\u8bfb\u4e66\u4f1a/ }));
-
-    fireEvent.click(screen.getByRole('button', { name: '\u8fd4\u56de\u4f1a\u8bdd\u5217\u8868' }));
-
-    expect(screen.getByTestId('mobile-chat-open')).toHaveTextContent('false');
+  it('marks the active conversation as read', async () => {
+    renderWorkspace('/home/c1');
+    await waitFor(() => expect(screen.getByText('第二条')).toBeInTheDocument());
+    await waitFor(() => expect(convApiMock.markRead).toHaveBeenCalledWith('c1', 2), { timeout: 2000 });
   });
 });

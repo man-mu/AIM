@@ -2,8 +2,9 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { PropsWithChildren } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginData } from '@/types/Auth/Auth';
+import { subscribeToToasts } from '@/components/ui/toast/toastBus';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { storage } from '@/utils/storage';
 
@@ -15,7 +16,7 @@ const authApiMock = vi.hoisted(() => ({
 
 vi.mock('@/apis/auth.ts', () => ({ authApi: authApiMock }));
 
-import { useLocalLogout, useLogin, useRegister } from './useAuth';
+import { useLocalLogout, useLogin, useLogout, useRegister } from './useAuth';
 
 const authData: LoginData = {
   userId: '1234567890123456789',
@@ -59,12 +60,21 @@ function createWrapper(initialEntry: string) {
 }
 
 describe('authentication mutations', () => {
+  const toasts: string[] = [];
+  let unsubscribeToasts: () => void;
+
   beforeEach(() => {
     localStorage.clear();
     authApiMock.login.mockReset();
     authApiMock.register.mockReset();
     authApiMock.logout.mockReset();
     useAuthStore.setState({ isLogin: false, user: null });
+    toasts.length = 0;
+    unsubscribeToasts = subscribeToToasts((item) => toasts.push(item.text));
+  });
+
+  afterEach(() => {
+    unsubscribeToasts();
   });
 
   it('establishes a session and redirects after login', async () => {
@@ -99,8 +109,7 @@ describe('authentication mutations', () => {
     expect(useAuthStore.getState().user).toEqual(authData.user);
   });
 
-  it('shows the business error returned by registration', async () => {
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+  it('surfaces the business error as a toast when registration fails', async () => {
     authApiMock.register.mockRejectedValue(new Error('用户名已存在'));
     const { result } = renderHook(() => useRegister(), { wrapper: createWrapper('/register') });
 
@@ -113,10 +122,10 @@ describe('authentication mutations', () => {
       }),
     ).rejects.toThrow('用户名已存在');
 
-    expect(alertSpy).toHaveBeenCalledWith('用户名已存在');
+    expect(toasts).toContain('用户名已存在');
   });
+
   it('clears local session state and returns to login without calling the API', async () => {
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const Wrapper = ({ children }: PropsWithChildren) => (
       <MemoryRouter initialEntries={['/home']}>
@@ -141,6 +150,19 @@ describe('authentication mutations', () => {
     expect(queryClient.getQueryData(['user'])).toBeUndefined();
     expect(useAuthStore.getState()).toMatchObject({ isLogin: false, user: null });
     expect(authApiMock.logout).not.toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalledWith('\u5df2\u9000\u51fa\u767b\u5f55');
+    expect(toasts).toContain('已退出登录');
+  });
+
+  it('revokes the refresh token on logout and clears the session even if the API fails', async () => {
+    storage.setRefreshToken('refresh-token');
+    authApiMock.logout.mockRejectedValue(new Error('network down'));
+
+    const { result } = renderHook(() => useLogout(), { wrapper: createWrapper('/home') });
+    await result.current.mutateAsync();
+
+    await waitFor(() => expect(document.querySelector('[data-testid="location"]')).toHaveTextContent('/login'));
+    expect(authApiMock.logout).toHaveBeenCalledWith({ refreshToken: 'refresh-token' });
+    expect(storage.getRefreshToken()).toBeNull();
+    expect(toasts).toContain('已退出登录');
   });
 });
