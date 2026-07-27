@@ -36,6 +36,7 @@ public enum ErrorCode {
     USER_TOKEN_EXPIRED    (10006, "Token 已过期"),
     USER_SESSION_NOT_FOUND(10007, "会话不存在"),
     USER_FORBIDDEN        (10008, "用户被禁用"),
+    USER_EMAIL_EXISTS     (10009, "邮箱已被注册"),
 
     // friend-service 2xxxx
     FRIEND_ALREADY_EXISTS    (20001, "已经是好友"),
@@ -72,6 +73,10 @@ public enum ErrorCode {
     FILE_UPLOAD_FAILED    (50002, "文件上传失败"),
     FILE_TOO_LARGE        (50003, "文件过大"),
     FILE_TYPE_NOT_SUPPORT (50004, "不支持的文件类型"),
+    FILE_PENDING          (50005, "文件尚未上传确认"),
+    FILE_DELETED          (50006, "文件已删除"),
+    FILE_NOT_UPLOADER     (50007, "无权操作他人文件"),
+    FILE_NAME_INVALID     (50008, "文件名不合法"),
 
     // signaling-service 6xxxx
     NOTIF_NOT_FOUND       (60001, "通知不存在"),

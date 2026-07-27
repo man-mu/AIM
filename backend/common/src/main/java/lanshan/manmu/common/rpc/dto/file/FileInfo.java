@@ -26,5 +26,6 @@ public class FileInfo {
     private int access;
     private long uploaderId;
     private String bucket;
+    private int status;          // 0=PENDING 1=CONFIRMED 2=DELETED
     private long createdAt;
 }

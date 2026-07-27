@@ -5,13 +5,13 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * 登出请求。
+ * 登出请求（同时吊销 accessToken + refreshToken，不向后兼容）。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class LogoutReq {
 
-    private long userId;
-    private String tokenId;
+    private String accessToken;
+    private String refreshToken;
 }

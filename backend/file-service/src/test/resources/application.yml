@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: file-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/aim?currentSchema=file
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+  # 测试不依赖 Nacos discovery（Dubbo 自动配置已 exclude，无需 cloud.nacos）
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+aim:
+  snowflake:
+    worker-id: 4
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: ${MINIO_BUCKET:aim}

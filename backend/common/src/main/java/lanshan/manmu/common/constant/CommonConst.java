@@ -39,5 +39,21 @@ public final class CommonConst {
     public static final int OUTBOX_DEFAULT_MAX_RETRIES = 10;
     public static final int OUTBOX_BATCH_SIZE     = 100;
 
+    // file-service — 文件状态
+    public static final int FILE_STATUS_PENDING   = 0;
+    public static final int FILE_STATUS_CONFIRMED = 1;
+    public static final int FILE_STATUS_DELETED   = 2;
+
+    // file-service — 文件大小限制（按 purpose 区分）
+    public static final long FILE_MAX_SIZE_IMAGE      = 5L * 1024 * 1024;   // 图片 ≤ 5MB
+    public static final long FILE_MAX_SIZE_ATTACHMENT = 100L * 1024 * 1024;  // 附件 ≤ 100MB
+
+    // file-service — Presigned URL 有效期（服务端固定，忽略客户端传值）
+    public static final int FILE_PRESIGN_EXPIRE_SEC = 1800;  // 30 分钟
+
+    // file-service — Zombie 清理
+    public static final int  FILE_ZOMBIE_TTL_MINUTES       = 30;       // PENDING 超 30 分钟视为 zombie
+    public static final long FILE_ZOMBIE_SCAN_INTERVAL_MS = 300_000L;  // 5 分钟扫一次
+
     private CommonConst() {}
 }

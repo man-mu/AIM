@@ -1,5 +1,6 @@
 package lanshan.manmu.common.rpc.dto.user;
 
+import java.math.BigDecimal;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -22,5 +23,5 @@ public class UserInfo {
     private long birthday;
     private long createdAt;
     private long updatedAt;
-    private double balance;
+    private BigDecimal balance;
 }

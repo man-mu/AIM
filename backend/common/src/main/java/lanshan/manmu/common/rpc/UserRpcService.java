@@ -12,11 +12,13 @@ public interface UserRpcService {
     LoginResp login(LoginReq req);
     void logout(LogoutReq req);
     ValidateTokenResp validateToken(ValidateTokenReq req);
+    RefreshTokenResp refreshToken(RefreshTokenReq req);
 
     // —— 资料 ——
     UserInfo getUserInfo(GetUserInfoReq req);
     BatchGetUserInfoResp batchGetUserInfo(BatchGetUserInfoReq req);
     UserInfo updateProfile(UpdateProfileReq req);
+    void updatePassword(UpdatePasswordReq req);
     SearchUsersResp searchUsers(SearchUsersReq req);
     ListAllUserIdsResp listAllUserIds();
 }

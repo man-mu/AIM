@@ -33,6 +33,11 @@ public class SnowflakeIdWorker {
     /** 时间戳左移位数 = 12 + 10 = 22 */
     private static final long TIMESTAMP_SHIFT = SEQUENCE_BITS + WORKER_ID_BITS;
 
+    /** 小回拨容忍阈值（ms），回拨不超过此值时等待时钟恢复 */
+    private static final long CLOCK_BACKWARD_TOLERANCE_MS = 5L;
+    /** 时钟等待最大重试次数（每次1ms），防止无限忙等 */
+    private static final int  MAX_CLOCK_WAIT_RETRIES     = 10;
+
     private final long workerId;
     private long sequence = 0L;
     private long lastTimestamp = -1L;
@@ -51,10 +56,19 @@ public class SnowflakeIdWorker {
     public synchronized long nextId() {
         long timestamp = System.currentTimeMillis();
 
-        // 时钟回拨检测
-        if (timestamp < lastTimestamp)
-            throw new IllegalStateException("Clock moved backwards. Refusing to generate id for "
-                + (lastTimestamp - timestamp) + "ms");
+        if (timestamp < lastTimestamp) {
+            long offset = lastTimestamp - timestamp;
+            if (offset <= CLOCK_BACKWARD_TOLERANCE_MS) {
+                waitForClockRecovery(offset);
+                timestamp = System.currentTimeMillis();
+                if (timestamp < lastTimestamp) {
+                    throw new IllegalStateException(
+                        "Clock moved backwards " + (lastTimestamp - timestamp) + "ms after recovery wait");
+                }
+            } else {
+                throw new IllegalStateException("Clock moved backwards " + offset + "ms");
+            }
+        }
 
         if (timestamp == lastTimestamp) {
             sequence = (sequence + 1) & SEQUENCE_MASK;
@@ -73,9 +87,30 @@ public class SnowflakeIdWorker {
 
     private long tilNextMillis(long lastTimestamp) {
         long timestamp = System.currentTimeMillis();
-        while (timestamp <= lastTimestamp)
+        int retries = 0;
+        while (timestamp <= lastTimestamp) {
+            if (++retries > MAX_CLOCK_WAIT_RETRIES) {
+                throw new IllegalStateException(
+                    "Clock stuck for too long, lastTimestamp=" + lastTimestamp);
+            }
+            try {
+                Thread.sleep(1L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while waiting for next millisecond", e);
+            }
             timestamp = System.currentTimeMillis();
+        }
         return timestamp;
+    }
+
+    private void waitForClockRecovery(long offsetMs) {
+        try {
+            Thread.sleep(offsetMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted during clock recovery", e);
+        }
     }
 
     /** 从 ID 中提取时间戳（毫秒，自 Epoch 起） */

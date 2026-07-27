@@ -5,14 +5,12 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Token 验证响应。
+ * Refresh Token 刷新请求。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ValidateTokenResp {
+public class RefreshTokenReq {
 
-    private boolean valid;
-    private long userId;
-    private long expiresAt;
+    private String refreshToken;
 }

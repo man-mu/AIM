@@ -66,6 +66,8 @@ xxx-service/
 - **网关职责**：`gateway-service` 只做路由转发、JWT 鉴权、限流，不写业务逻辑。
 - **配置管理**：各服务 `application.yml` 只含基础配置，业务配置通过 Nacos 配置中心管理。
 - **Phase 2 隔离**：Phase 1 阶段不引入任何 Spring AI / SAA 依赖，`bot-service` / `kb-service` / `llm-gateway-service` 仅保留目录占位，不加入父 POM modules。
+- **依赖注入**：统一使用构造器注入，禁止字段注入（`@Autowired` 或 `@Resource` 直接标注于字段）。配置值 (`@Value`) 也应通过构造器参数注入，保持不可变性和可测试性。
+- **日志记录**：使用slf4j记录关键操作、异常信息等，便于调试和监控系统运行。
 
 ## 反模式
 

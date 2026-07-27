@@ -5,14 +5,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Token 验证响应。
+ * 修改密码请求（独立 RPC，与 updateProfile 解耦）。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ValidateTokenResp {
+public class UpdatePasswordReq {
 
-    private boolean valid;
     private long userId;
-    private long expiresAt;
+    private String oldPassword;
+    private String newPassword;
 }
