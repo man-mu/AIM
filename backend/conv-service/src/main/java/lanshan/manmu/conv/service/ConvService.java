@@ -15,6 +15,7 @@ public interface ConvService {
     void markRead(MarkReadReq req);
     void updateLastMessage(UpdateLastMessageReq req);
     void muteMember(MuteMemberReq req);
+    void unmuteMember(MuteMemberReq req);
     void transferOwner(TransferOwnerReq req);
     void updateAnnouncement(long convId, long operatorId, String content);
     GetSettingsResp getSettings(GetSettingsReq req);

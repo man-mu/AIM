@@ -39,6 +39,16 @@ public class PermissionChecker {
         return requireRole(convId, operatorId, MemberRole.ADMIN);
     }
 
+    /**
+     * 要求操作者是会话成员（任意角色：OWNER/ADMIN/MEMBER 均通过）。
+     * <p>复用 {@link #requireRole}，传入 {@link MemberRole#MEMBER}（角色值最大=3），
+     * 故任意有效成员 role 都 <= MEMBER，不会触发权限拒绝；仅当非成员（member==null）时抛
+     * {@link ErrorCode#CONV_NOT_MEMBER}(30004)。
+     */
+    public ConversationMember requireMember(long convId, long userId) {
+        return requireRole(convId, userId, MemberRole.MEMBER);
+    }
+
     /** 验证目标角色 > 操作者角色（不能对同级/上级操作） */
     public void verifyTargetNotHigher(long convId, long targetId, long operatorId) {
         ConversationMember target = getMember(convId, targetId);

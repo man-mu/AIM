@@ -117,6 +117,37 @@ class PermissionCheckerTest {
         assertEquals(ErrorCode.CONV_PERMISSION_DENIED.getCode(), ex.getCode());
     }
 
+    // ==================== requireMember ====================
+
+    @Test
+    void requireMember_nonMember_throwsConvNotMember() {
+        when(memberMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> permissionChecker.requireMember(CONV_ID, OPERATOR));
+        assertEquals(ErrorCode.CONV_NOT_MEMBER.getCode(), ex.getCode());
+    }
+
+    @Test
+    void requireMember_member_pass() {
+        // MEMBER 角色应通过（任意角色成员均可，无角色上限限制）
+        when(memberMapper.selectOne(any(LambdaQueryWrapper.class)))
+                .thenReturn(mockMember(OPERATOR, MemberRole.MEMBER));
+        ConversationMember result = permissionChecker.requireMember(CONV_ID, OPERATOR);
+        assertNotNull(result);
+        assertEquals(MemberRole.MEMBER, result.getRole());
+    }
+
+    @Test
+    void requireMember_owner_pass() {
+        // OWNER 也应通过：minRole=MEMBER(3)，OWNER(1) <= 3
+        when(memberMapper.selectOne(any(LambdaQueryWrapper.class)))
+                .thenReturn(mockMember(OPERATOR, MemberRole.OWNER));
+        ConversationMember result = permissionChecker.requireMember(CONV_ID, OPERATOR);
+        assertNotNull(result);
+        assertEquals(MemberRole.OWNER, result.getRole());
+    }
+
     // ==================== verifyTargetNotHigher ====================
 
     @Test

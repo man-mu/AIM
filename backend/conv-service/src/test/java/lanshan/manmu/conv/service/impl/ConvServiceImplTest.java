@@ -477,6 +477,84 @@ class ConvServiceImplTest {
         assertEquals(ErrorCode.CONV_MEMBER_NOT_FOUND.getCode(), ex.getCode());
     }
 
+    // ==================== unmuteMember（解除禁言，与永久禁言区分） ====================
+
+    @Test
+    void unmuteMember_adminUnmuteMember_setsNotMutedAndZeroUntil() {
+        // target 当前处于永久禁言状态（isMuted=true, muteUntil=0）
+        ConversationMember target = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
+        target.setIsMuted(true);
+        target.setMuteUntil(0L);
+        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(target);
+
+        // DELETE /mute 端点 → unmuteMember，请求体 muteUntil=0（但 unmuteMember 忽略该值，强制 false/0）
+        MuteMemberReq req = new MuteMemberReq(CONV_ID, CREATOR, MEMBER_A, 0L);
+        convService.unmuteMember(req);
+
+        // 验证权限校验
+        verify(permissionChecker).requireAdmin(CONV_ID, CREATOR);
+        verify(permissionChecker).verifyTargetNotHigher(CONV_ID, MEMBER_A, CREATOR);
+
+        // 验证写库：isMuted=false / muteUntil=0（与永久禁言 isMuted=true/muteUntil=0 区分）
+        ArgumentCaptor<ConversationMember> captor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(memberMapper).updateById(captor.capture());
+        ConversationMember updated = captor.getValue();
+        assertFalse(updated.getIsMuted(), "解除禁言后应写 isMuted=false");
+        assertEquals(0L, updated.getMuteUntil());
+    }
+
+    @Test
+    void unmuteMember_nonAdmin_throwsPermissionDenied() {
+        doThrow(new BizException(ErrorCode.CONV_PERMISSION_DENIED, "not admin"))
+                .when(permissionChecker).requireAdmin(CONV_ID, CREATOR);
+
+        MuteMemberReq req = new MuteMemberReq(CONV_ID, CREATOR, MEMBER_A, 0L);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.unmuteMember(req));
+        assertEquals(ErrorCode.CONV_PERMISSION_DENIED.getCode(), ex.getCode());
+    }
+
+    @Test
+    void unmuteMember_targetNotExist_throwsMemberNotFound() {
+        doNothing().when(permissionChecker).verifyTargetNotHigher(CONV_ID, MEMBER_A, CREATOR);
+        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
+
+        MuteMemberReq req = new MuteMemberReq(CONV_ID, CREATOR, MEMBER_A, 0L);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.unmuteMember(req));
+        assertEquals(ErrorCode.CONV_MEMBER_NOT_FOUND.getCode(), ex.getCode());
+    }
+
+    @Test
+    void mute_permanent_thenUnmute_writeDistinctIsMuted() {
+        // 回归：永久禁言(isMuted=true,muteUntil=0) 与解除禁言(isMuted=false,muteUntil=0) 写库不同
+        // 确保不会因 muteUntil==0 无法区分来源而失效
+
+        // 1) 永久禁言
+        ConversationMember m = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
+        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(m);
+
+        MuteMemberReq muteReq = new MuteMemberReq(CONV_ID, CREATOR, MEMBER_A, 0L);
+        convService.muteMember(muteReq);
+        ArgumentCaptor<ConversationMember> muteCaptor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(memberMapper, times(1)).updateById(muteCaptor.capture());
+        assertTrue(muteCaptor.getValue().getIsMuted(), "永久禁言写 isMuted=true");
+        assertEquals(0L, muteCaptor.getValue().getMuteUntil());
+
+        // 2) 解除禁言
+        // 重置 member 的 muted 状态模拟 DB 持久化后的状态
+        m.setIsMuted(true);
+        m.setMuteUntil(0L);
+
+        MuteMemberReq unmuteReq = new MuteMemberReq(CONV_ID, CREATOR, MEMBER_A, 0L);
+        convService.unmuteMember(unmuteReq);
+        ArgumentCaptor<ConversationMember> unmuteCaptor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(memberMapper, times(2)).updateById(unmuteCaptor.capture());
+        ConversationMember unmuted = unmuteCaptor.getValue();
+        assertFalse(unmuted.getIsMuted(), "解除禁言写 isMuted=false");
+        assertEquals(0L, unmuted.getMuteUntil());
+    }
+
     // ==================== transferOwner ====================
 
     @Test
@@ -603,6 +681,8 @@ class ConvServiceImplTest {
 
     // ==================== Phase 1.3 读路径 ====================
 
+    // ---- 读路径成员权限校验（数据泄露漏洞修复）----
+
     @Test
     void getConversation_convNotExist_throwsConvNotFound() {
         when(convMapper.selectById(CONV_ID)).thenReturn(null);
@@ -613,10 +693,86 @@ class ConvServiceImplTest {
     }
 
     @Test
+    void getConversation_nonMember_throwsConvNotMember() {
+        // 会话存在但调用者非成员 → 抛 CONV_NOT_MEMBER（防止按 convId 遍历窃取会话信息）
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
+        // permissionChecker 是 mock：直接 stub requireMember 抛非成员异常，模拟非成员场景
+        doThrow(new BizException(ErrorCode.CONV_NOT_MEMBER, "not in conv " + CONV_ID))
+                .when(permissionChecker).requireMember(CONV_ID, CREATOR);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.getConversation(CONV_ID, CREATOR));
+        assertEquals(ErrorCode.CONV_NOT_MEMBER.getCode(), ex.getCode());
+        // 非成员不应再读未读数
+        verify(unreadCache, never()).getUnreadCount(anyLong(), anyLong());
+    }
+
+    @Test
+    void getMembers_nonMember_throwsConvNotMember() {
+        // 会话存在但调用者非成员 → 抛 CONV_NOT_MEMBER（原实现忽略 userId 字段）
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
+        doThrow(new BizException(ErrorCode.CONV_NOT_MEMBER, "not in conv " + CONV_ID))
+                .when(permissionChecker).requireMember(CONV_ID, CREATOR);
+
+        GetMembersReq req = new GetMembersReq(CONV_ID, CREATOR, 1, 20);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.getMembers(req));
+        assertEquals(ErrorCode.CONV_NOT_MEMBER.getCode(), ex.getCode());
+        // 非成员不应分页查询成员
+        verify(memberMapper, never()).selectPage(any(), any());
+    }
+
+    @Test
+    void getMembers_convNotExist_throwsConvNotFound() {
+        // 校验顺序：会话不存在优先于成员校验
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+
+        GetMembersReq req = new GetMembersReq(CONV_ID, CREATOR, 1, 20);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.getMembers(req));
+        assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+        verify(permissionChecker, never()).getMember(anyLong(), anyLong());
+    }
+
+    @Test
+    void markRead_nonMember_throwsConvNotMember() {
+        // 会话存在但调用者非成员 → UPSERT 前抛 CONV_NOT_MEMBER
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
+        doThrow(new BizException(ErrorCode.CONV_NOT_MEMBER, "not in conv " + CONV_ID))
+                .when(permissionChecker).requireMember(CONV_ID, CREATOR);
+
+        MarkReadReq req = new MarkReadReq(CREATOR, CONV_ID, 100L);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.markRead(req));
+        assertEquals(ErrorCode.CONV_NOT_MEMBER.getCode(), ex.getCode());
+        // 非成员不应 UPSERT 已读位置
+        verify(readSeqMapper, never()).upsertReadSeq(anyLong(), anyLong(), anyLong(), anyLong());
+        verify(applicationEventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void markRead_convNotExist_throwsConvNotFound() {
+        // 校验顺序：会话不存在优先于成员校验
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+
+        MarkReadReq req = new MarkReadReq(CREATOR, CONV_ID, 100L);
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.markRead(req));
+        assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+        verify(permissionChecker, never()).getMember(anyLong(), anyLong());
+    }
+
+    @Test
     void getConversation_success_unreadCountFilled() {
         Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
         conv.setMaxSeq(100L);
         when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        // 调用者是会话成员（requireMember 通过）
+        when(permissionChecker.getMember(CONV_ID, CREATOR))
+                .thenReturn(mockMember(CONV_ID, CREATOR, MemberRole.MEMBER));
         when(unreadCache.getUnreadCount(CREATOR, CONV_ID)).thenReturn(5L);
 
         ConversationDTO dto = convService.getConversation(CONV_ID, CREATOR);
@@ -689,6 +845,9 @@ class ConvServiceImplTest {
 
     @Test
     void getMembers_empty_returnsEmptyList() {
+        // 读权限校验：会话存在 + 调用者是成员（requireMember 未 stubbed → mock 返回 null 但不抛）
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 1));
         Page<ConversationMember> emptyPage = new Page<>(1, 20);
         emptyPage.setTotal(0);
         when(memberMapper.selectPage(any(IPage.class), any())).thenReturn(emptyPage);
@@ -706,6 +865,8 @@ class ConvServiceImplTest {
 
     @Test
     void getMembers_normal_fillLastReadSeqAndUserInfo() {
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 2));
         ConversationMember m1 = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
         ConversationMember m2 = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
         Page<ConversationMember> page = new Page<>(1, 20);
@@ -754,6 +915,8 @@ class ConvServiceImplTest {
 
     @Test
     void getMembers_userRpcReturnsNull_fallbackEmptyUsername() {
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 1));
         ConversationMember m1 = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
         Page<ConversationMember> page = new Page<>(1, 20);
         page.setRecords(List.of(m1));
@@ -909,6 +1072,11 @@ class ConvServiceImplTest {
 
     @Test
     void markRead_callsUpsertAndPublishSpringEvent() {
+        // 读权限校验：会话存在 + 调用者是成员（requireMember 通过）
+        when(convMapper.selectById(CONV_ID))
+                .thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 1));
+        when(permissionChecker.getMember(CONV_ID, CREATOR))
+                .thenReturn(mockMember(CONV_ID, CREATOR, MemberRole.MEMBER));
         when(snowflake.nextId()).thenReturn(7777L);
 
         MarkReadReq req = new MarkReadReq(CREATOR, CONV_ID, 100L);

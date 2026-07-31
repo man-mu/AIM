@@ -117,9 +117,9 @@ public class ConvController {
     public Result<Void> unmute(@RequestHeader("X-User-Id") long operatorId,
                                 @PathVariable("conversationId") long conversationId,
                                 @PathVariable("userId") long targetUserId) {
-        // 解除禁言 = muteUntil=0
+        // 解除禁言：独立写 is_muted=false / mute_until=0，与永久禁言（PUT 写 is_muted=true / mute_until=0）区分
         MuteMemberReq req = new MuteMemberReq(conversationId, operatorId, targetUserId, 0L);
-        convService.muteMember(req);
+        convService.unmuteMember(req);
         return Result.ok();
     }
 

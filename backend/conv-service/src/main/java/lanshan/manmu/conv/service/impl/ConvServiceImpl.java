@@ -230,6 +230,27 @@ public class ConvServiceImpl implements ConvService {
 
     @Override
     @Transactional
+    public void unmuteMember(MuteMemberReq req) {
+        long convId = req.getConversationId();
+        long operatorId = req.getOperatorId();
+        permissionChecker.requireAdmin(convId, operatorId);
+        permissionChecker.verifyTargetNotHigher(convId, req.getTargetUserId(), operatorId);
+
+        ConversationMember member = permissionChecker.getMember(convId, req.getTargetUserId());
+        if (member == null) {
+            throw new BizException(ErrorCode.CONV_MEMBER_NOT_FOUND, "target " + req.getTargetUserId());
+        }
+        // 解除禁言：写入 is_muted=false / mute_until=0。
+        // 注意：永久禁言(muteMember)写入 is_muted=true / mute_until=0，二者仅 isMuted 不同，
+        // 必须用独立方法而非复用 muteMember，否则消息拦截层会把 isMuted=true+muteUntil=0 判为永久禁言，
+        // 导致被禁言用户永远无法解除（功能 bug 修复）。
+        member.setIsMuted(false);
+        member.setMuteUntil(0L);
+        memberMapper.updateById(member);
+    }
+
+    @Override
+    @Transactional
     public void transferOwner(TransferOwnerReq req) {
         long convId = req.getConversationId();
         long fromUserId = req.getFromUserId();
@@ -284,10 +305,14 @@ public class ConvServiceImpl implements ConvService {
 
     @Override
     public ConversationDTO getConversation(long conversationId, long userId) {
+        // 先查会话存在性
         Conversation conv = convMapper.selectById(conversationId);
         if (conv == null) {
             throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + conversationId);
         }
+        // 读权限校验：调用者必须是会话成员（非成员抛 CONV_NOT_MEMBER 30004），
+        // 防止任意登录用户按 convId 遍历窃取会话信息（数据泄露漏洞修复）
+        permissionChecker.requireMember(conversationId, userId);
         ConversationDTO dto = toDto(conv);
         dto.setUnreadCount(unreadCache.getUnreadCount(userId, conversationId));
         return dto;
@@ -317,6 +342,16 @@ public class ConvServiceImpl implements ConvService {
     @Override
     public GetMembersResp getMembers(GetMembersReq req) {
         long convId = req.getConversationId();
+        long userId = req.getUserId();
+
+        // 读权限校验：先确认会话存在，再校验调用者是成员。
+        // 原实现完全忽略 req.getUserId()，导致非成员可枚举他人会话成员列表（数据泄露漏洞修复）。
+        // 先查会话存在性避免"会话不存在"被误报成"非成员"。
+        if (convMapper.selectById(convId) == null) {
+            throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + convId);
+        }
+        permissionChecker.requireMember(convId, userId);
+
         int pageNum = req.getPageNum() <= 0 ? 1 : req.getPageNum();
         int pageSize = req.getPageSize() <= 0 ? 20 : Math.min(req.getPageSize(), 100);
 
@@ -413,6 +448,13 @@ public class ConvServiceImpl implements ConvService {
         long convId = req.getConversationId();
         long userId = req.getUserId();
         long lastReadSeq = req.getLastReadSeq();
+
+        // 读权限校验：先确认会话存在，再校验调用者是成员，在 UPSERT 前拦截非成员越权标记已读。
+        // 先查会话存在性避免"会话不存在"被误报成"非成员"。
+        if (convMapper.selectById(convId) == null) {
+            throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + convId);
+        }
+        permissionChecker.requireMember(convId, userId);
 
         // UPSERT 已读位置（GREATEST 保证只增不减，spec 第 8.3 节）
         readSeqMapper.upsertReadSeq(snowflake.nextId(), convId, userId, lastReadSeq);
