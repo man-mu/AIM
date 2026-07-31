@@ -2,6 +2,7 @@ package lanshan.manmu.conv.service.impl;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lanshan.manmu.common.constant.ConvType;
@@ -134,14 +135,35 @@ public class ConvServiceImpl implements ConvService {
         convMapper.advisoryLock(singleChatLockKey(creatorId, peerUserId));
         Conversation existing = convMapper.findPrivateConversation(creatorId, peerUserId);
         if (existing != null) {
-            return new CreateConversationResp(existing.getId(), toDto(existing));
+            // 幂等返回既有会话：历史数据 name 可能为空，兜底填充对端 username
+            ConversationDTO dto = toDto(existing);
+            fillSingleChatName(dto, existing, creatorId);
+            return new CreateConversationResp(existing.getId(), dto);
         }
         long convId = snowflake.nextId();
-        Conversation conv = newConversation(convId, ConvType.SINGLE, "", "", 0L, 2);
+        // 单聊 name 自动为对端 username（契约 §5 ConversationDTO.name）
+        Conversation conv = newConversation(convId, ConvType.SINGLE,
+                resolvePeerUsername(peerUserId), "", 0L, 2);
         convMapper.insert(conv);
         addMemberRecord(convId, creatorId, MemberRole.MEMBER);
         addMemberRecord(convId, peerUserId, MemberRole.MEMBER);
         return new CreateConversationResp(convId, toDto(conv));
+    }
+
+    /**
+     * 查询对端用户的 username（单聊 name 用；RPC 失败降级为空串，不阻断创建）。
+     */
+    private String resolvePeerUsername(long peerUserId) {
+        try {
+            BatchGetUserInfoResp resp = userRpcService.batchGetUserInfo(
+                    new BatchGetUserInfoReq(List.of(peerUserId)));
+            if (resp != null && resp.getUsers() != null && !resp.getUsers().isEmpty()) {
+                return resp.getUsers().get(0).getUsername();
+            }
+        } catch (Exception e) {
+            log.warn("resolve peer username failed userId={}", peerUserId, e);
+        }
+        return "";
     }
 
     /**
@@ -437,6 +459,7 @@ public class ConvServiceImpl implements ConvService {
         // 防止任意登录用户按 convId 遍历窃取会话信息（数据泄露漏洞修复）
         permissionChecker.requireMember(conversationId, userId);
         ConversationDTO dto = toDto(conv);
+        fillSingleChatName(dto, conv, userId);
         dto.setUnreadCount(unreadCache.getUnreadCount(userId, conversationId));
         return dto;
     }
@@ -459,7 +482,71 @@ public class ConvServiceImpl implements ConvService {
             dtos.forEach(dto -> dto.setUnreadCount(unreadMap.getOrDefault(dto.getId(), 0L)));
         }
 
+        // 历史数据兜底：单聊 name 为空时批量填充对端 username（契约 §5 name=对端 username）
+        fillSingleChatNames(dtos, userId);
+
         return new ListConversationsResp(dtos, result.getTotal());
+    }
+
+    /**
+     * 单聊 name 兜底（详情）：name 为空时查对端 username 填充（不落库，兼容历史数据）。
+     */
+    private void fillSingleChatName(ConversationDTO dto, Conversation conv, long userId) {
+        if (conv.getType() == ConvType.SINGLE && (dto.getName() == null || dto.getName().isEmpty())) {
+            long peerId = listMemberIds(conv.getId()).stream()
+                    .filter(id -> id != userId)
+                    .findFirst().orElse(0L);
+            if (peerId > 0) {
+                dto.setName(resolvePeerUsername(peerId));
+            }
+        }
+    }
+
+    /**
+     * 单聊 name 兜底（列表）：批量收集 name 为空的单聊，查成员表拿对端 userId 后
+     * 一次 user RPC 批量补全 username。
+     */
+    private void fillSingleChatNames(List<ConversationDTO> dtos, long userId) {
+        List<ConversationDTO> needName = dtos.stream()
+                .filter(d -> d.getType() == ConvType.SINGLE
+                        && (d.getName() == null || d.getName().isEmpty()))
+                .toList();
+        if (needName.isEmpty()) {
+            return;
+        }
+        List<Long> convIds = needName.stream().map(ConversationDTO::getId).toList();
+        // 一次查成员表：convId -> 对端 userId（排除调用者）
+        List<ConversationMember> members = memberMapper.selectList(
+                new LambdaQueryWrapper<ConversationMember>()
+                        .in(ConversationMember::getConvId, convIds)
+                        .ne(ConversationMember::getUserId, userId));
+        Map<Long, Long> peerMap = new HashMap<>();
+        for (ConversationMember m : members) {
+            peerMap.putIfAbsent(m.getConvId(), m.getUserId());
+        }
+        // 一次 user RPC 批量取 username
+        List<Long> peerIds = peerMap.values().stream().distinct().toList();
+        if (peerIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> nameMap = new HashMap<>();
+        try {
+            BatchGetUserInfoResp resp = userRpcService.batchGetUserInfo(
+                    new BatchGetUserInfoReq(peerIds));
+            if (resp != null && resp.getUsers() != null) {
+                for (UserInfo u : resp.getUsers()) {
+                    nameMap.put(u.getId(), u.getUsername());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("batch resolve peer username failed userIds={}", peerIds, e);
+        }
+        needName.forEach(d -> {
+            Long peerId = peerMap.get(d.getId());
+            if (peerId != null && nameMap.containsKey(peerId)) {
+                d.setName(nameMap.get(peerId));
+            }
+        });
     }
 
     @Override
