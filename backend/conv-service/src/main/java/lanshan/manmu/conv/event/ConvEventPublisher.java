@@ -45,7 +45,9 @@ public class ConvEventPublisher {
         try {
             String json = objectMapper.writeValueAsString(event);
             kafkaTemplate.send(topic, String.valueOf(key), json);
-            log.info("publish event topic={} key={} body={}", topic, key, json);
+            // 仅记录标识字段；事件正文（可能含聊天内容）存在隐私与日志爆炸风险，降为 DEBUG
+            log.info("publish event topic={} key={}", topic, key);
+            log.debug("publish event body topic={} key={} body={}", topic, key, json);
         } catch (JsonProcessingException e) {
             log.error("publish event failed topic={} key={}", topic, key, e);
             // 不抛异常：Kafka 发送失败不应影响已提交的 DB 事务

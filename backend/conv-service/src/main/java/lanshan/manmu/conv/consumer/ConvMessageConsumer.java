@@ -54,15 +54,22 @@ public class ConvMessageConsumer {
             );
             convService.updateLastMessage(req);
         } catch (RuntimeException | Error e) {
-            log.error("consume message.failed record={} topic={} partition={} offset={}",
-                    record.value(), record.topic(), record.partition(), record.offset(), e);
+            // 仅记录标识字段（topic/partition/offset/key，key 即 convId）；
+            // 事件正文（含聊天内容）存在隐私与日志爆炸风险，降为 DEBUG。
+            log.error("consume message.created failed topic={} partition={} offset={} key={}",
+                    record.topic(), record.partition(), record.offset(), record.key(), e);
+            log.debug("consume message.created failed raw payload topic={} partition={} offset={} value={}",
+                    record.topic(), record.partition(), record.offset(), record.value());
             // 不再吞异常：原样向上抛（运行时异常无需声明 throws），交给 DefaultErrorHandler 重试，超限写 DLQ
             throw e;
         } catch (Exception e) {
             // 主要是 JsonProcessingException（受检异常），日志归档后包成运行时异常向上抛，
-            // 让 DefaultErrorHandler 接管重试/DLQ，避免污染 @KafkaListener 方法签名
-            log.error("consume message.failed record={} topic={} partition={} offset={}",
-                    record.value(), record.topic(), record.partition(), record.offset(), e);
+            // 让 DefaultErrorHandler 接管重试/DLQ，避免污染 @KafkaListener 方法签名。
+            // 仅记录标识字段；事件正文降为 DEBUG（含聊天内容，避免隐私泄漏与日志爆炸）。
+            log.error("consume message.created failed topic={} partition={} offset={} key={}",
+                    record.topic(), record.partition(), record.offset(), record.key(), e);
+            log.debug("consume message.created failed raw payload topic={} partition={} offset={} value={}",
+                    record.topic(), record.partition(), record.offset(), record.value());
             throw new RuntimeException("consume message.created failed", e);
         }
     }
