@@ -6,9 +6,12 @@ spring:
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
-  # 测试不依赖 Nacos discovery（Dubbo 自动配置已 exclude，无需 cloud.nacos）
+  # 测试不依赖 Nacos（Dubbo 自动配置已 exclude；config/discovery 全部禁用，
+  # 避免 import-check 因缺少 spring.config.import 报错）
   cloud:
     nacos:
+      config:
+        enabled: false
       discovery:
         enabled: false
 
