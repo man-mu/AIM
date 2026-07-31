@@ -2,12 +2,16 @@ package lanshan.manmu.file.service;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.List;
 import lanshan.manmu.common.constant.CommonConst;
 import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
 import lanshan.manmu.common.rpc.dto.file.*;
+import lanshan.manmu.file.config.MinioConfig;
 import lanshan.manmu.file.mapper.FileMapper;
 import lanshan.manmu.file.model.entity.FileEntity;
 import org.junit.jupiter.api.*;
@@ -64,6 +68,8 @@ class FileServiceImplTest {
 
     private final FileService fileService;
     private final FileMapper fileMapper;
+    private final MinioClient minioClient;
+    private final MinioConfig minioConfig;
 
     /** 主链路 fileId（getUploadURL→confirm→download→delete） */
     private long fileId;
@@ -73,9 +79,26 @@ class FileServiceImplTest {
     private final List<Long> createdFileIds = new ArrayList<>();
 
     @Autowired
-    public FileServiceImplTest(FileService fileService, FileMapper fileMapper) {
+    public FileServiceImplTest(FileService fileService, FileMapper fileMapper,
+                               MinioClient minioClient, MinioConfig minioConfig) {
         this.fileService = fileService;
         this.fileMapper = fileMapper;
+        this.minioClient = minioClient;
+        this.minioConfig = minioConfig;
+    }
+
+    /** 向 MinIO 真实上传测试对象（key/bucket 取自 DB 记录） */
+    private void uploadObject(long id, byte[] content) {
+        FileEntity entity = fileMapper.selectById(id);
+        try {
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(minioConfig.getBucket())
+                    .object(entity.getKey())
+                    .stream(new ByteArrayInputStream(content), content.length, -1)
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("测试上传对象失败 fileId=" + id, e);
+        }
     }
 
     @AfterAll
@@ -148,10 +171,15 @@ class FileServiceImplTest {
 
     /**
      * 正常确认上传 → status 变为 CONFIRMED。
+     * <p>confirmUpload 现在会 statObject 校验 MinIO 实际大小，故确认前先真实上传对象。
      */
     @Test
     @Order(3)
     void shouldConfirmUpload() {
+        // 真实上传 1024 字节（与 getUploadURL 声明一致）
+        byte[] content = new byte[1024];
+        uploadObject(fileId, content);
+
         ConfirmUploadReq req = new ConfirmUploadReq();
         req.setFileId(fileId);
         req.setUploaderId(UPLOADER_ID);
@@ -468,5 +496,89 @@ class FileServiceImplTest {
         List<FileInfo> infos = fileService.batchGetFileInfo(List.of(), UPLOADER_ID);
         assertNotNull(infos);
         assertTrue(infos.isEmpty());
+    }
+
+    // ==================== confirmUpload 服务端实际大小校验（#6） ====================
+
+    /** 新建 PENDING 文件并返回 fileId（声明 size=1024） */
+    private long newPendingFile() {
+        GetUploadURLReq req = new GetUploadURLReq();
+        req.setName("check.jpg");
+        req.setSize(1024);
+        req.setMimeType("image/jpeg");
+        req.setPurpose(1);
+        req.setAccess(1);
+        req.setUploaderId(UPLOADER_ID);
+        return track(fileService.getUploadURL(req).getFileId());
+    }
+
+    /**
+     * 只申请 URL 未实际上传对象 → confirmUpload 拒绝（FILE_UPLOAD_FAILED）。
+     * <p>防僵尸记录：statObject NoSuchKey 时不允许确认。
+     */
+    @Test
+    @Order(23)
+    void shouldRejectConfirmObjectNotUploaded() {
+        long id = newPendingFile();
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.confirmUpload(req));
+        assertEquals(ErrorCode.FILE_UPLOAD_FAILED.getCode(), ex.getCode());
+
+        // DB 记录保持 PENDING，未被误确认
+        assertEquals(CommonConst.FILE_STATUS_PENDING,
+                fileMapper.selectById(id).getStatus());
+    }
+
+    /**
+     * 实际上传大小超过声明值 → confirmUpload 拒绝（FILE_TOO_LARGE）并删除 MinIO 对象。
+     */
+    @Test
+    @Order(24)
+    void shouldRejectConfirmOversizeActual() {
+        long id = newPendingFile();
+        // 声明 1024 字节，实际上传 2048 字节
+        uploadObject(id, new byte[2048]);
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.confirmUpload(req));
+        assertEquals(ErrorCode.FILE_TOO_LARGE.getCode(), ex.getCode());
+
+        // DB 记录保持 PENDING + MinIO 对象已被清理（statObject 应 NoSuchKey）
+        assertEquals(CommonConst.FILE_STATUS_PENDING,
+                fileMapper.selectById(id).getStatus());
+        assertThrows(Exception.class, () -> minioClient.statObject(
+                io.minio.StatObjectArgs.builder()
+                        .bucket(minioConfig.getBucket())
+                        .object(fileMapper.selectById(id).getKey())
+                        .build()));
+    }
+
+    /**
+     * 实际大小小于声明值 → 确认成功且 DB size 校正为实际值。
+     */
+    @Test
+    @Order(25)
+    void shouldConfirmCorrectionWhenActualSmaller() {
+        long id = newPendingFile();
+        // 声明 1024 字节，实际上传 100 字节
+        uploadObject(id, new byte[100]);
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        ConfirmUploadResp resp = fileService.confirmUpload(req);
+        assertEquals(CommonConst.FILE_STATUS_CONFIRMED, resp.getFile().getStatus());
+        assertEquals(100L, fileMapper.selectById(id).getSize(),
+                "DB size 应以 MinIO 实际大小为准");
     }
 }
