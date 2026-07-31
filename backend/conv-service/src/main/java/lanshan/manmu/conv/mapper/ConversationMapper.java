@@ -44,4 +44,28 @@ public interface ConversationMapper extends BaseMapper<Conversation> {
                              @Param("lastMessageId") Long lastMessageId,
                              @Param("maxSeq") Long maxSeq,
                              @Param("lastMessagePreview") String lastMessagePreview);
+
+    /**
+     * 事务级 PostgreSQL advisory lock（单聊创建串行化）。
+     * <p>用 {@code pg_advisory_xact_lock(bigint)}，锁在事务提交/回滚时自动释放，无需手动 unlock。
+     * 用于 {@code createSingleConversation} 查重前，避免并发"先查后插"产生两条 A↔B 单聊。
+     * key 由调用方用稳定哈希（min*2^32 + max）计算。
+     * <p>用 {@code @Update} 而非 {@code @Select}：该函数返回 void，{@code @Select} 会尝试解析结果集
+     * 报 "No constructor found in void"；DML 注解不处理结果集，适配 void 返回。
+     */
+    @Update("SELECT pg_advisory_xact_lock(#{key})")
+    void advisoryLock(@Param("key") long key);
+
+    /**
+     * 原子自增 member_count 并校验上限（addMembers 并发安全）。
+     * <p>{@code WHERE member_count + #{n} <= #{max}} 在 DB 层原子判定，避免基于事务前快照判断
+     * 在并发下突破 500 上限；返回 0 行表示超限，调用方抛 {@code CONV_MEMBER_LIMIT}。
+     *
+     * @return 受影响行数：1=已自增；0=超上限或会话不存在
+     */
+    @Update("UPDATE conversations SET member_count = member_count + #{n}, updated_at = NOW() " +
+            "WHERE id = #{convId} AND member_count + #{n} <= #{max}")
+    int incrementMemberCount(@Param("convId") Long convId,
+                             @Param("n") int n,
+                             @Param("max") int max);
 }

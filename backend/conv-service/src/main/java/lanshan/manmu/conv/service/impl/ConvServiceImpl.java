@@ -35,7 +35,10 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.dubbo.config.annotation.DubboReference;
+import org.apache.dubbo.config.spring.ReferenceBean;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,9 +55,7 @@ public class ConvServiceImpl implements ConvService {
     private final UnreadCacheService unreadCache;
     private final ConvEventPublisher eventPublisher;
     private final ApplicationEventPublisher applicationEventPublisher;
-
-    @DubboReference
-    private UserRpcService userRpcService;
+    private final UserRpcService userRpcService;
 
     public ConvServiceImpl(ConversationMapper convMapper,
                            ConversationMemberMapper memberMapper,
@@ -64,7 +65,8 @@ public class ConvServiceImpl implements ConvService {
                            PermissionChecker permissionChecker,
                            UnreadCacheService unreadCache,
                            ConvEventPublisher eventPublisher,
-                           ApplicationEventPublisher applicationEventPublisher) {
+                           ApplicationEventPublisher applicationEventPublisher,
+                           UserRpcService userRpcService) {
         this.convMapper = convMapper;
         this.memberMapper = memberMapper;
         this.readSeqMapper = readSeqMapper;
@@ -74,6 +76,26 @@ public class ConvServiceImpl implements ConvService {
         this.unreadCache = unreadCache;
         this.eventPublisher = eventPublisher;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.userRpcService = userRpcService;
+    }
+
+    /**
+     * Dubbo 引用声明（构造器注入适配）。
+     * <p>Dubbo 3.3.6 的 {@code @DubboReference} {@code @Target} 仅含 {@code FIELD/METHOD/ANNOTATION_TYPE}
+     * （不含 PARAMETER），且 {@code ReferenceAnnotationBeanPostProcessor} 只扫描字段与方法、不处理构造器参数，
+     * 因此无法直接把 {@code @DubboReference} 标在构造器参数上（既编译不通过，生产环境也无法解析 bean）。
+     * <p>此处采用 Dubbo 官方推荐的 Java-config 模式：在 {@code @Bean} 方法上标 {@code @DubboReference}、
+     * 返回 {@code ReferenceBean<UserRpcService>}，由 Dubbo 注册为可按类型注入的 bean，
+     * {@link ConvServiceImpl} 构造器再按类型注入 {@link UserRpcService}，从而消除字段注入（AGENTS.md 规范）。
+     * 测试侧 {@code @MockBean UserRpcService} 由 Spring 直接替换该 bean，无需 {@code ReflectionTestUtils}。
+     */
+    @Configuration
+    static class DubboReferenceConfig {
+        @Bean
+        @DubboReference
+        public ReferenceBean<UserRpcService> userRpcReference() {
+            return new ReferenceBean<>();
+        }
     }
 
     /** 在事务内发布 Spring 内部事件，由 @TransactionalEventListener 在 AFTER_COMMIT 处理 */
@@ -106,7 +128,10 @@ public class ConvServiceImpl implements ConvService {
         if (peerUserId == creatorId) {
             throw new BizException(ErrorCode.BAD_REQUEST, "cannot create single conv with self");
         }
-        // 单聊去重
+        // 单聊去重并发安全：事务级 PostgreSQL advisory lock 串行化"查重+插入"。
+        // conversations 表无 A↔B 唯一约束，"先 findPrivateConversation 再 insert"非原子，
+        // 并发可创建两条单聊；pg_advisory_xact_lock 在事务提交时自动释放。
+        convMapper.advisoryLock(singleChatLockKey(creatorId, peerUserId));
         Conversation existing = convMapper.findPrivateConversation(creatorId, peerUserId);
         if (existing != null) {
             return new CreateConversationResp(existing.getId(), toDto(existing));
@@ -119,6 +144,17 @@ public class ConvServiceImpl implements ConvService {
         return new CreateConversationResp(convId, toDto(conv));
     }
 
+    /**
+     * 单聊去重 advisory lock key：{@code min(a,b) * 2^32 + max(a,b)}。
+     * <p>min/max 保证 A↔B 与 B↔A 取同一把锁；用 long 运算避免 int 溢出。
+     * userId 是正数且远小于 2^32（snowflake worker 上限），min 乘 2^32 不会溢出 long（2^62 量级）。
+     */
+    private static long singleChatLockKey(long a, long b) {
+        long min = Math.min(a, b);
+        long max = Math.max(a, b);
+        return min * (1L << 32) + max;
+    }
+
     private CreateConversationResp createGroupConversation(CreateConversationReq req, long creatorId) {
         String name = req.getName();
         if (name == null || name.isEmpty()) {
@@ -127,7 +163,9 @@ public class ConvServiceImpl implements ConvService {
         if (name.length() > ConvConstants.MAX_NAME_LENGTH) {
             throw new BizException(ErrorCode.BAD_REQUEST, "name too long");
         }
-        List<Long> memberIds = req.getMemberIds() == null ? List.of() : req.getMemberIds();
+        // 请求内去重 + 过滤 creatorId 本身：避免重复 id 触发 idx_conv_members_pair 唯一索引冲突，
+        // 也避免 creatorId 同时出现在 memberIds 列表导致 OWNER/MEMBER 重复插入。
+        List<Long> memberIds = dedupExcludingSelf(req.getMemberIds(), creatorId);
         int memberCount = 1 + memberIds.size();
         if (memberCount > ConvConstants.MAX_MEMBER_COUNT) {
             throw new BizException(ErrorCode.CONV_MEMBER_LIMIT, "exceed max member count");
@@ -143,19 +181,40 @@ public class ConvServiceImpl implements ConvService {
         return new CreateConversationResp(convId, toDto(conv));
     }
 
+    /**
+     * 去重并排除 selfId（群聊创建场景）。
+     * <p>用 LinkedHashSet 去重保持入参顺序；过滤掉与 creator 相同的 id，
+     * 避免 creator 作为 OWNER 插入后又作为 MEMBER 重复插入触发唯一索引冲突。
+     */
+    private static List<Long> dedupExcludingSelf(List<Long> ids, long selfId) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<Long> set = new java.util.LinkedHashSet<>(ids.size());
+        for (Long id : ids) {
+            if (id != null && id != selfId) {
+                set.add(id);
+            }
+        }
+        return new java.util.ArrayList<>(set);
+    }
+
     @Override
     @Transactional
     public AddMembersResp addMembers(AddMembersReq req) {
         long convId = req.getConversationId();
         long operatorId = req.getOperatorId();
-        permissionChecker.requireAdmin(convId, operatorId);
-
+        // 错误码顺序：会话不存在应返回 CONV_NOT_FOUND，而非被 requireAdmin 误报成 CONV_NOT_MEMBER。
+        // 原实现先 requireAdmin（内部查成员表，会话不存在时也走 CONV_NOT_MEMBER），客户端无法区分。
         Conversation conv = convMapper.selectById(convId);
         if (conv == null) {
             throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + convId);
         }
+        permissionChecker.requireAdmin(convId, operatorId);
 
-        List<Long> userIds = req.getUserIds() == null ? List.of() : req.getUserIds();
+        // 请求内去重：避免重复 userId 触发 idx_conv_members_pair 唯一索引冲突（DuplicateKeyException→500）。
+        // 已存在成员判定逻辑保持不变（下文 getMember），去重只针对请求内重复项。
+        List<Long> userIds = dedupIds(req.getUserIds());
         List<Long> addedUserIds = new ArrayList<>();
         List<Long> alreadyMemberIds = new ArrayList<>();
 
@@ -164,20 +223,35 @@ public class ConvServiceImpl implements ConvService {
                 alreadyMemberIds.add(userId);
                 continue;
             }
-            if (conv.getMemberCount() + addedUserIds.size() + 1 > ConvConstants.MAX_MEMBER_COUNT) {
-                throw new BizException(ErrorCode.CONV_MEMBER_LIMIT, "exceed max member count");
-            }
             addMemberRecord(convId, userId, MemberRole.MEMBER);
             addedUserIds.add(userId);
         }
 
+        // 原子自增 member_count 并校验上限：DB 层 WHERE member_count + n <= max 原子判定，
+        // 避免基于事务前快照判断在并发下突破 500 上限；返回 0 行表示超限，回滚整事务。
         if (!addedUserIds.isEmpty()) {
-            conv.setMemberCount(conv.getMemberCount() + addedUserIds.size());
-            convMapper.updateById(conv);
+            int rows = convMapper.incrementMemberCount(convId, addedUserIds.size(), ConvConstants.MAX_MEMBER_COUNT);
+            if (rows == 0) {
+                throw new BizException(ErrorCode.CONV_MEMBER_LIMIT, "exceed max member count");
+            }
             publishAfterCommit(new MembersJoinedEvent(convId, addedUserIds, operatorId));
         }
 
         return new AddMembersResp(addedUserIds, alreadyMemberIds);
+    }
+
+    /** 请求内 userId 去重（addMembers 场景），保留入参顺序，忽略 null。 */
+    private static List<Long> dedupIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<Long> set = new java.util.LinkedHashSet<>(ids.size());
+        for (Long id : ids) {
+            if (id != null) {
+                set.add(id);
+            }
+        }
+        return new java.util.ArrayList<>(set);
     }
 
     @Override
@@ -185,9 +259,20 @@ public class ConvServiceImpl implements ConvService {
     public void removeMembers(RemoveMembersReq req) {
         long convId = req.getConversationId();
         long operatorId = req.getOperatorId();
-        List<Long> userIds = req.getUserIds() == null ? List.of() : req.getUserIds();
+        // 请求内去重：避免重复 userId 触发 idx_conv_members_pair 唯一索引冲突。
+        List<Long> userIds = dedupIds(req.getUserIds());
+
+        // 先查会话存在性：会话不存在应返回 CONV_NOT_FOUND，而非被 requireAdmin/requireMember 误报成 CONV_NOT_MEMBER。
+        // 原实现未查会话直接进循环，会话不存在时走 requireAdmin 抛 CONV_NOT_MEMBER，客户端无法区分。
+        if (convMapper.selectById(convId) == null) {
+            throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + convId);
+        }
 
         List<Long> removedUserIds = new ArrayList<>();
+        // 记录被移除的 OWNER，用于自退后群主转移判定。
+        // operator 自退时跳过权限校验，被移除的 ownerId 即 operatorId；管理员踢 OWNER 会被 verifyTargetNotHigher 拒绝，
+        // 故此处"被移除且为 OWNER"等价于"OWNER 自退"，符合 spec"自退免校验"语义。
+        long removedOwnerId = 0L;
         for (Long userId : userIds) {
             if (userId != operatorId) {
                 permissionChecker.requireAdmin(convId, operatorId);
@@ -197,6 +282,9 @@ public class ConvServiceImpl implements ConvService {
             if (member == null) {
                 continue;
             }
+            if (member.getRole() != null && member.getRole() == MemberRole.OWNER) {
+                removedOwnerId = userId;
+            }
             memberMapper.deleteById(member.getId());
             removedUserIds.add(userId);
         }
@@ -204,11 +292,41 @@ public class ConvServiceImpl implements ConvService {
         if (!removedUserIds.isEmpty()) {
             Conversation conv = convMapper.selectById(convId);
             if (conv != null) {
+                // OWNER 自退：把群主转移给最早加入的非 OWNER 成员，避免群聊永久无主。
+                // spec/API 文档对 removeMembers 仅定义"自退免校验+delete+更新memberCount+发事件"，
+                // 未约定 owner 自退语义；此处选保守方案 a（自动转移），防止 conversations.owner_id 指向已退出用户。
+                // 若群聊只剩 owner 一人自退（无其他成员），owner_id 置 0（空群/解散态）。
+                if (removedOwnerId != 0L && conv.getType() == ConvType.GROUP && conv.getOwnerId() == removedOwnerId) {
+                    transferOwnerOnSelfLeave(convId, conv);
+                }
                 conv.setMemberCount(Math.max(0, conv.getMemberCount() - removedUserIds.size()));
                 convMapper.updateById(conv);
             }
             publishAfterCommit(new MembersLeftEvent(convId, removedUserIds, operatorId));
         }
+    }
+
+    /**
+     * OWNER 自退时把群主转移给最早加入的非 OWNER 成员。
+     * <p>查该会话按 joined_at ASC 的第一条非 OWNER 成员，更新其 role=OWNER 并把 conv.ownerId 指向它；
+     * 无其他成员则 ownerId 置 0（空群态）。
+     * <p>不调用 {@link #transferOwner}：transferOwner 含 requireOwner 校验且要求 from/to 不同成员，
+     * 而此处 from（旧 owner）即将/已被删除，语义不同，故内联三步原子更新。
+     */
+    private void transferOwnerOnSelfLeave(long convId, Conversation conv) {
+        ConversationMember successor = memberMapper.selectOne(new LambdaQueryWrapper<ConversationMember>()
+                .eq(ConversationMember::getConvId, convId)
+                .ne(ConversationMember::getRole, MemberRole.OWNER)
+                .orderByAsc(ConversationMember::getJoinedAt)
+                .last("LIMIT 1"));
+        if (successor == null) {
+            // 无其他成员，群聊空置：ownerId 置 0
+            conv.setOwnerId(0L);
+            return;
+        }
+        successor.setRole(MemberRole.OWNER);
+        memberMapper.updateById(successor);
+        conv.setOwnerId(successor.getUserId());
     }
 
     @Override
@@ -255,6 +373,11 @@ public class ConvServiceImpl implements ConvService {
         long convId = req.getConversationId();
         long fromUserId = req.getFromUserId();
         long toUserId = req.getToUserId();
+
+        // 错误码顺序：会话不存在应返回 CONV_NOT_FOUND，而非被 requireOwner 误报成 CONV_NOT_MEMBER。
+        if (convMapper.selectById(convId) == null) {
+            throw new BizException(ErrorCode.CONV_NOT_FOUND, "conv " + convId);
+        }
 
         permissionChecker.requireOwner(convId, fromUserId);
 

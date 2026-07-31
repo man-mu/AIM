@@ -41,7 +41,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * ConvServiceImpl 纯 Mockito 单测（spec 第 18.1 节，Phase 1.2 写路径部分）。
@@ -103,9 +102,7 @@ class ConvServiceImplTest {
 
         convService = new ConvServiceImpl(convMapper, memberMapper, readSeqMapper,
                 settingsMapper, snowflake, permissionChecker, unreadCache,
-                eventPublisher, applicationEventPublisher);
-        // @DubboReference 字段注入：手动 set
-        ReflectionTestUtils.setField(convService, "userRpcService", userRpcService);
+                eventPublisher, applicationEventPublisher, userRpcService);
     }
 
     private Conversation mockConv(long convId, int type, long ownerId, int memberCount) {
@@ -260,10 +257,55 @@ class ConvServiceImplTest {
         assertEquals(9001L, resp.getConversationId());
     }
 
+    @Test
+    void createConversation_groupDuplicateMemberIds_dedupAndExcludeCreator() {
+        // 请求内重复 id + creator 本身出现在 memberIds：去重后只 insert 唯一非 creator 成员，避免唯一索引冲突（任务4）
+        // memberIds = [MEMBER_A, MEMBER_A, CREATOR, MEMBER_B] → 去重+排除 creator → [MEMBER_A, MEMBER_B]
+        List<Long> memberIds = List.of(MEMBER_A, MEMBER_A, CREATOR, MEMBER_B);
+        CreateConversationReq req = new CreateConversationReq(ConvType.GROUP, CREATOR, null, "g", "", memberIds);
+        CreateConversationResp resp = convService.createConversation(req);
+
+        // creator(OWNER) + 2 个唯一成员 = 3 条 member 记录
+        ArgumentCaptor<ConversationMember> memberCaptor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(memberMapper, times(3)).insert(memberCaptor.capture());
+        List<Long> insertedUserIds = memberCaptor.getAllValues().stream()
+                .map(ConversationMember::getUserId).toList();
+        assertEquals(List.of(CREATOR, MEMBER_A, MEMBER_B), insertedUserIds);
+        // memberCount = 1(creator) + 2(去重后) = 3
+        ArgumentCaptor<Conversation> convCaptor = ArgumentCaptor.forClass(Conversation.class);
+        verify(convMapper).insert(convCaptor.capture());
+        assertEquals(3, convCaptor.getValue().getMemberCount());
+        assertEquals(9001L, resp.getConversationId());
+    }
+
+    @Test
+    void createConversation_singleAdvisoryLockKeyStableForBothDirections() {
+        // 任务2：单聊创建在查重前获取 advisory lock，A↔B 与 B↔A 应取同一把 lock key（min*2^32+max）
+        when(convMapper.findPrivateConversation(CREATOR, PEER)).thenReturn(null);
+        when(convMapper.findPrivateConversation(PEER, CREATOR)).thenReturn(null);
+
+        // A 创建与 B 的单聊
+        convService.createConversation(new CreateConversationReq(ConvType.SINGLE, CREATOR, PEER, "", "", null));
+        // B 创建与 A 的单聊
+        convService.createConversation(new CreateConversationReq(ConvType.SINGLE, PEER, CREATOR, "", "", null));
+
+        // 两次 advisoryLock 调用的 key 应相同（方向无关）
+        ArgumentCaptor<Long> keyCaptor = ArgumentCaptor.forClass(Long.class);
+        verify(convMapper, times(2)).advisoryLock(keyCaptor.capture());
+        long key1 = keyCaptor.getAllValues().get(0);
+        long key2 = keyCaptor.getAllValues().get(1);
+        assertEquals(key1, key2, "A↔B 与 B↔A 的 advisory lock key 必须相同");
+        // 验证 key = min*2^32 + max 的稳定哈希
+        long expected = Math.min(CREATOR, PEER) * (1L << 32) + Math.max(CREATOR, PEER);
+        assertEquals(expected, key1);
+    }
+
     // ==================== addMembers ====================
 
     @Test
     void addMembers_operatorNotAdmin_throwsPermissionDenied() {
+        // 错误码顺序：会话存在才走 requireAdmin
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 2));
         // permissionChecker.requireAdmin 抛异常
         doThrow(new BizException(ErrorCode.CONV_PERMISSION_DENIED, "not admin"))
                 .when(permissionChecker).requireAdmin(CONV_ID, CREATOR);
@@ -276,13 +318,16 @@ class ConvServiceImplTest {
 
     @Test
     void addMembers_convNotExist_throwsConvNotFound() {
-        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
+        // 错误码顺序修正：会话不存在应先抛 CONV_NOT_FOUND，不走到 requireAdmin（避免误报 CONV_NOT_MEMBER）
         when(convMapper.selectById(CONV_ID)).thenReturn(null);
 
         AddMembersReq req = new AddMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A));
         BizException ex = assertThrows(BizException.class,
                 () -> convService.addMembers(req));
         assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+        // 会话不存在不应再校验成员权限（验证生产路径顺序，防止假阳性）
+        verify(permissionChecker, never()).requireAdmin(anyLong(), anyLong());
+        verify(permissionChecker, never()).getMember(anyLong(), anyLong());
     }
 
     @Test
@@ -307,6 +352,9 @@ class ConvServiceImplTest {
         Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, ConvConstants.MAX_MEMBER_COUNT);
         when(convMapper.selectById(CONV_ID)).thenReturn(conv);
         when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
+        // 原子自增返回 0 行表示超上限，触发 CONV_MEMBER_LIMIT
+        when(convMapper.incrementMemberCount(eq(CONV_ID), eq(1), eq(ConvConstants.MAX_MEMBER_COUNT)))
+                .thenReturn(0);
 
         AddMembersReq req = new AddMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A));
         BizException ex = assertThrows(BizException.class,
@@ -320,16 +368,17 @@ class ConvServiceImplTest {
         when(convMapper.selectById(CONV_ID)).thenReturn(conv);
         when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
         when(permissionChecker.getMember(CONV_ID, MEMBER_B)).thenReturn(null);
+        // 原子自增 member_count +2，返回 1 表示成功
+        when(convMapper.incrementMemberCount(eq(CONV_ID), eq(2), eq(ConvConstants.MAX_MEMBER_COUNT)))
+                .thenReturn(1);
 
         AddMembersReq req = new AddMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A, MEMBER_B));
         AddMembersResp resp = convService.addMembers(req);
 
         // 验证 insert 2 个 member
         verify(memberMapper, times(2)).insert(any(ConversationMember.class));
-        // 验证 memberCount 更新为 4
-        ArgumentCaptor<Conversation> captor = ArgumentCaptor.forClass(Conversation.class);
-        verify(convMapper).updateById(captor.capture());
-        assertEquals(4, captor.getValue().getMemberCount());
+        // 验证 member_count 原子自增 +2（DB 层 WHERE member_count+2<=max 校验上限）
+        verify(convMapper).incrementMemberCount(CONV_ID, 2, ConvConstants.MAX_MEMBER_COUNT);
 
         assertEquals(List.of(MEMBER_A, MEMBER_B), resp.getAddedUserIds());
         assertTrue(resp.getAlreadyMemberIds().isEmpty());
@@ -358,8 +407,29 @@ class ConvServiceImplTest {
 
         assertTrue(resp.getAddedUserIds().isEmpty());
         verify(memberMapper, never()).insert(any(ConversationMember.class));
+        // 空列表不调原子自增、不发事件
+        verify(convMapper, never()).incrementMemberCount(anyLong(), anyInt(), anyInt());
         verify(convMapper, never()).updateById(any(Conversation.class));
         verify(applicationEventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void addMembers_duplicateUserIdsInRequest_dedupNoUniqueIndexConflict() {
+        // 请求内重复 userId：去重后只 insert 一次，避免 idx_conv_members_pair 唯一索引冲突（任务4）
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 2);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
+        when(convMapper.incrementMemberCount(eq(CONV_ID), eq(1), eq(ConvConstants.MAX_MEMBER_COUNT)))
+                .thenReturn(1);
+
+        // MEMBER_A 重复 3 次
+        AddMembersReq req = new AddMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A, MEMBER_A, MEMBER_A));
+        AddMembersResp resp = convService.addMembers(req);
+
+        // 去重后只 insert 1 次，原子自增 +1
+        verify(memberMapper, times(1)).insert(any(ConversationMember.class));
+        verify(convMapper).incrementMemberCount(CONV_ID, 1, ConvConstants.MAX_MEMBER_COUNT);
+        assertEquals(List.of(MEMBER_A), resp.getAddedUserIds());
     }
 
     // ==================== removeMembers ====================
@@ -394,6 +464,8 @@ class ConvServiceImplTest {
 
     @Test
     void removeMembers_nonAdmin_throwsPermissionDenied() {
+        // 错误码顺序：会话存在才走 requireAdmin
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
         doThrow(new BizException(ErrorCode.CONV_PERMISSION_DENIED, "not admin"))
                 .when(permissionChecker).requireAdmin(CONV_ID, CREATOR);
 
@@ -405,6 +477,8 @@ class ConvServiceImplTest {
 
     @Test
     void removeMembers_targetSameRole_throwsPermissionDenied() {
+        // 错误码顺序：会话存在才走权限校验
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
         // 踢同级 → verifyTargetNotHigher 抛异常
         doThrow(new BizException(ErrorCode.CONV_PERMISSION_DENIED, "same role"))
                 .when(permissionChecker).verifyTargetNotHigher(CONV_ID, MEMBER_A, CREATOR);
@@ -429,6 +503,88 @@ class ConvServiceImplTest {
         // 没有移除任何人 → 不更新 memberCount 不发事件
         verify(convMapper, never()).updateById(any(Conversation.class));
         verify(applicationEventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void removeMembers_convNotExist_throwsConvNotFound() {
+        // 错误码顺序修正：会话不存在应先抛 CONV_NOT_FOUND，不走到 requireAdmin（避免误报 CONV_NOT_MEMBER）
+        when(convMapper.selectById(CONV_ID)).thenReturn(null);
+
+        RemoveMembersReq req = new RemoveMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A));
+        BizException ex = assertThrows(BizException.class,
+                () -> convService.removeMembers(req));
+        assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+        verify(permissionChecker, never()).requireAdmin(anyLong(), anyLong());
+        verify(memberMapper, never()).deleteById(anyLong());
+    }
+
+    @Test
+    void removeMembers_ownerSelfQuit_transfersOwnerToEarliestMember() {
+        // OWNER 自退：群主自动转移给最早加入的非 OWNER 成员，避免群聊永久无主（任务5，方案 a）
+        ConversationMember owner = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(owner);
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        // 最早加入的非 OWNER 成员 = MEMBER_A
+        ConversationMember successor = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
+        when(memberMapper.selectOne(any())).thenReturn(successor);
+
+        RemoveMembersReq req = new RemoveMembersReq(CONV_ID, CREATOR, List.of(CREATOR));
+        convService.removeMembers(req);
+
+        // 1. owner 记录被删除
+        verify(memberMapper).deleteById(owner.getId());
+        // 2. 继任者 role 升为 OWNER
+        ArgumentCaptor<ConversationMember> memberCaptor = ArgumentCaptor.forClass(ConversationMember.class);
+        verify(memberMapper).updateById(memberCaptor.capture());
+        assertEquals(MemberRole.OWNER, memberCaptor.getValue().getRole());
+        assertEquals(MEMBER_A, memberCaptor.getValue().getUserId());
+        // 3. conv.ownerId 更新为继任者，memberCount 减 1
+        ArgumentCaptor<Conversation> convCaptor = ArgumentCaptor.forClass(Conversation.class);
+        verify(convMapper).updateById(convCaptor.capture());
+        assertEquals(MEMBER_A, convCaptor.getValue().getOwnerId());
+        assertEquals(2, convCaptor.getValue().getMemberCount());
+    }
+
+    @Test
+    void removeMembers_ownerSelfQuit_noOtherMember_ownerIdZero() {
+        // OWNER 自退且无其他成员：ownerId 置 0（空群态），不调 memberMapper.updateById 继任
+        ConversationMember owner = mockMember(CONV_ID, CREATOR, MemberRole.OWNER);
+        when(permissionChecker.getMember(CONV_ID, CREATOR)).thenReturn(owner);
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 1);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+        when(memberMapper.selectOne(any())).thenReturn(null);
+
+        RemoveMembersReq req = new RemoveMembersReq(CONV_ID, CREATOR, List.of(CREATOR));
+        convService.removeMembers(req);
+
+        verify(memberMapper).deleteById(owner.getId());
+        // 无继任者：不更新任何 member 的 role
+        verify(memberMapper, never()).updateById(any(ConversationMember.class));
+        // conv.ownerId 置 0，memberCount 减为 0
+        ArgumentCaptor<Conversation> convCaptor = ArgumentCaptor.forClass(Conversation.class);
+        verify(convMapper).updateById(convCaptor.capture());
+        assertEquals(0L, convCaptor.getValue().getOwnerId());
+        assertEquals(0, convCaptor.getValue().getMemberCount());
+    }
+
+    @Test
+    void removeMembers_duplicateUserIdsInRequest_dedup() {
+        // 请求内重复 userId：去重后只删除一次（任务4）
+        ConversationMember member = mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER);
+        when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(member);
+        Conversation conv = mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3);
+        when(convMapper.selectById(CONV_ID)).thenReturn(conv);
+
+        // MEMBER_A 重复 2 次
+        RemoveMembersReq req = new RemoveMembersReq(CONV_ID, CREATOR, List.of(MEMBER_A, MEMBER_A));
+        convService.removeMembers(req);
+
+        // 去重后只 delete 一次，memberCount 减 1
+        verify(memberMapper, times(1)).deleteById(anyLong());
+        ArgumentCaptor<Conversation> captor = ArgumentCaptor.forClass(Conversation.class);
+        verify(convMapper).updateById(captor.capture());
+        assertEquals(2, captor.getValue().getMemberCount());
     }
 
     // ==================== muteMember ====================
@@ -559,6 +715,8 @@ class ConvServiceImplTest {
 
     @Test
     void transferOwner_notOwner_throwsPermissionDenied() {
+        // 错误码顺序：会话存在才走 requireOwner
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
         doThrow(new BizException(ErrorCode.CONV_PERMISSION_DENIED, "not owner"))
                 .when(permissionChecker).requireOwner(CONV_ID, CREATOR);
 
@@ -570,6 +728,9 @@ class ConvServiceImplTest {
 
     @Test
     void transferOwner_toSelf_throwsOwnerTransferSelf() {
+        // 错误码顺序：会话存在 + requireOwner 通过后，才校验 toSelf
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
+
         TransferOwnerReq req = new TransferOwnerReq(CONV_ID, CREATOR, CREATOR);
         BizException ex = assertThrows(BizException.class,
                 () -> convService.transferOwner(req));
@@ -578,6 +739,8 @@ class ConvServiceImplTest {
 
     @Test
     void transferOwner_targetNotMember_throwsMemberNotFound() {
+        // 错误码顺序：会话存在 + requireOwner 通过 + toSelf 通过后，才校验目标成员
+        when(convMapper.selectById(CONV_ID)).thenReturn(mockConv(CONV_ID, ConvType.GROUP, CREATOR, 3));
         when(permissionChecker.getMember(CONV_ID, MEMBER_A)).thenReturn(null);
 
         TransferOwnerReq req = new TransferOwnerReq(CONV_ID, CREATOR, MEMBER_A);
@@ -588,14 +751,14 @@ class ConvServiceImplTest {
 
     @Test
     void transferOwner_convNotExist_throwsConvNotFound() {
-        when(permissionChecker.getMember(CONV_ID, MEMBER_A))
-                .thenReturn(mockMember(CONV_ID, MEMBER_A, MemberRole.MEMBER));
+        // 错误码顺序修正：会话不存在应先抛 CONV_NOT_FOUND，不走到 requireOwner（避免误报 CONV_NOT_MEMBER）
         when(convMapper.selectById(CONV_ID)).thenReturn(null);
 
         TransferOwnerReq req = new TransferOwnerReq(CONV_ID, CREATOR, MEMBER_A);
         BizException ex = assertThrows(BizException.class,
                 () -> convService.transferOwner(req));
         assertEquals(ErrorCode.CONV_NOT_FOUND.getCode(), ex.getCode());
+        verify(permissionChecker, never()).requireOwner(anyLong(), anyLong());
     }
 
     @Test

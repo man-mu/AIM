@@ -1,7 +1,6 @@
 package lanshan.manmu.conv;
 
 import lanshan.manmu.common.rpc.UserRpcService;
-import lanshan.manmu.conv.service.impl.ConvServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -11,7 +10,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -21,9 +19,9 @@ import org.testcontainers.utility.DockerImageName;
  * <p>
  * - @SpringBootTest：加载完整 Spring 上下文
  * - @ActiveProfiles("test")：激活 application-test.yml，排除 Dubbo 自动配置、禁用 Nacos/Kafka auto-startup
- * - @MockBean UserRpcService：mock Dubbo 引用，避免连真实 Nacos 找 Provider
+ * - @MockBean UserRpcService：mock Dubbo 引用 bean（构造器注入后 Spring 直接注入构造器，无需 ReflectionTestUtils）
  * - @DynamicPropertySource：注入 PG 容器 JDBC URL 和 Redis 容器地址
- * - @BeforeEach：排除 Dubbo 后 @DubboReference 字段为 null，手动注入 mock 到 ConvServiceImpl
+ * - @BeforeEach：清理 conv schema 表与 Redis（容器单例模式下测试之间共享）
  *
  * <p>容器生命周期：用单例模式手动启动，所有测试类共享同一容器实例，避免 JUnit 5 @Container
  * 在测试类之间关闭容器导致 Spring ApplicationContext 缓存引用失效端口的问题。
@@ -64,11 +62,15 @@ public abstract class ConvIntegrationTestBase {
         r.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 
+    /**
+     * mock Dubbo UserRpcService 引用。
+     * <p>{@link lanshan.manmu.conv.service.impl.ConvServiceImpl} 改为构造器注入后，
+     * Dubbo 引用由 {@code @Bean @DubboReference ReferenceBean<UserRpcService>} 声明为 Spring bean，
+     * {@code @MockBean} 直接替换该 bean 并由 Spring 注入到 ConvServiceImpl 构造器，
+     * 不再需要 {@code ReflectionTestUtils.setField} 手动注入。
+     */
     @MockBean
     protected UserRpcService userRpcService;
-
-    @Autowired
-    private ConvServiceImpl convServiceImpl;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -83,8 +85,5 @@ public abstract class ConvIntegrationTestBase {
                 "conv.conv_read_seqs, conv.conv_settings, conv.conv_bots");
         // 2. 清理 Redis（测试之间共享 Redis 容器）
         redis.getConnectionFactory().getConnection().flushDb();
-        // 3. 排除 Dubbo 自动配置后，@DubboReference UserRpcService 字段为 null
-        // 手动注入 @MockBean 创建的 mock 到 ConvServiceImpl
-        ReflectionTestUtils.setField(convServiceImpl, "userRpcService", userRpcService);
     }
 }
