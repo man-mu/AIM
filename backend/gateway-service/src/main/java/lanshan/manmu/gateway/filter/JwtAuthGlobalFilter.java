@@ -102,13 +102,33 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                 return unauthorized(exchange, "token revoked");
             }
 
-            // 5. 注入 X-User-Id header
+            // 5. 提取 userId（供改密吊销校验与 X-User-Id 注入）
             Object userIdObj = jwt.getPayload("userId");
             if (userIdObj == null) {
                 return unauthorized(exchange, "missing userId in token");
             }
             long userId = Long.parseLong(String.valueOf(userIdObj));
 
+            // 5.5 改密吊销：user-service 改密时记录 pwd_changed:{userId}=epoch millis，
+            // 签发时间（iat）早于改密时间的旧 token 一律拒绝（与 user-service validateToken 对齐）。
+            // 注意：hutool JWT payload 中 iat 为 epoch 秒，需先换算为毫秒再比较。
+            Object iatObj = jwt.getPayload("iat");
+            if (iatObj != null) {
+                long iatMillis;
+                if (iatObj instanceof Number n) {
+                    long v = n.longValue();
+                    iatMillis = v < 1_000_000_000_000L ? v * 1000L : v;
+                } else {
+                    iatMillis = 0L;
+                }
+                String pwdChanged = redis.opsForValue().get("pwd_changed:" + userId);
+                if (pwdChanged != null && iatMillis > 0 && iatMillis < Long.parseLong(pwdChanged)) {
+                    log.warn("jwt auth 失败: token 早于改密时间 userId={}", userId);
+                    return unauthorized(exchange, "token revoked");
+                }
+            }
+
+            // 6. 注入 X-User-Id header
             ServerHttpRequest mutated = exchange.getRequest().mutate()
                     .header("X-User-Id", String.valueOf(userId))
                     .build();

@@ -31,10 +31,15 @@ class JwtAuthGlobalFilterTest {
 
     private StringRedisTemplate redis;
     private JwtAuthGlobalFilter filter;
+    private org.springframework.data.redis.core.ValueOperations<String, String> valueOps;
 
     @BeforeEach
     void setUp() {
         redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
+        // opsForValue().get(...) 用于 pwd_changed 改密吊销查询，默认返回 null（无改密记录）
+        valueOps = org.mockito.Mockito.mock(org.springframework.data.redis.core.ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get(anyString())).thenReturn(null);
         filter = new JwtAuthGlobalFilter(redis, TEST_SECRET);
     }
 
@@ -235,10 +240,78 @@ class JwtAuthGlobalFilterTest {
                 .isEqualTo(org.springframework.http.HttpStatus.UNAUTHORIZED);
     }
 
+    // ==================== 改密吊销（pwd_changed） ====================
+
+    @Test
+    @DisplayName("token 签发早于改密时间：返回 401（改密后旧 token 被吊销）")
+    void shouldRejectTokenIssuedBeforePwdChange() {
+        long userId = 5555L;
+        String jti = UUID.randomUUID().toString();
+        // 1 小时前签发的"旧" token
+        String token = signToken(userId, jti, "access",
+                java.util.Date.from(java.time.Instant.now().minusSeconds(3600)));
+
+        when(redis.hasKey("revoked_token:" + jti)).thenReturn(false);
+        // 改密发生在 30 分钟前（epoch millis）
+        when(valueOps.get("pwd_changed:" + userId))
+                .thenReturn(String.valueOf(System.currentTimeMillis() - 30 * 60 * 1000L));
+
+        org.springframework.mock.http.server.reactive.MockServerHttpRequest request =
+                org.springframework.mock.http.server.reactive.MockServerHttpRequest
+                        .get("/api/v1/users/5555")
+                        .header(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .build();
+        org.springframework.mock.web.server.MockServerWebExchange exchange =
+                org.springframework.mock.web.server.MockServerWebExchange.from(request);
+
+        java.util.concurrent.atomic.AtomicBoolean chained = new java.util.concurrent.atomic.AtomicBoolean(false);
+        org.springframework.cloud.gateway.filter.GatewayFilterChain chain = ex -> {
+            chained.set(true);
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+
+        Assertions.assertThat(chained.get()).as("改密前签发的 token 不得放行").isFalse();
+        Assertions.assertThat(exchange.getResponse().getStatusCode())
+                .isEqualTo(org.springframework.http.HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    @DisplayName("token 签发晚于改密时间：放行（改密后的新 token 不受影响）")
+    void shouldAcceptTokenIssuedAfterPwdChange() {
+        long userId = 6666L;
+        String jti = UUID.randomUUID().toString();
+        String token = signToken(userId, jti, "access");
+
+        when(redis.hasKey("revoked_token:" + jti)).thenReturn(false);
+        // 改密发生在 1 小时前（epoch millis），token 是当前签发的
+        when(valueOps.get("pwd_changed:" + userId))
+                .thenReturn(String.valueOf(System.currentTimeMillis() - 3600 * 1000L));
+
+        org.springframework.mock.http.server.reactive.MockServerHttpRequest request =
+                org.springframework.mock.http.server.reactive.MockServerHttpRequest
+                        .get("/api/v1/users/6666")
+                        .header(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .build();
+        org.springframework.mock.web.server.MockServerWebExchange exchange =
+                org.springframework.mock.web.server.MockServerWebExchange.from(request);
+
+        java.util.concurrent.atomic.AtomicBoolean chained = new java.util.concurrent.atomic.AtomicBoolean(false);
+        org.springframework.cloud.gateway.filter.GatewayFilterChain chain = ex -> {
+            chained.set(true);
+            return Mono.empty();
+        };
+
+        filter.filter(exchange, chain).block();
+
+        Assertions.assertThat(chained.get()).as("改密后签发的 token 应放行").isTrue();
+    }
+
     // ==================== 签发工具 ====================
 
     /**
-     * 用与 user-service 同样的 Hutool JWT 签发 token。
+     * 用与 user-service 同样的 Hutool JWT 签发 token（iat 取当前时间）。
      *
      * @param userId userId claim
      * @param jti    jti claim
@@ -246,11 +319,19 @@ class JwtAuthGlobalFilterTest {
      * @return 签发的 JWT 字符串
      */
     private String signToken(long userId, String jti, String type) {
+        return signToken(userId, jti, type, new java.util.Date());
+    }
+
+    /**
+     * 用与 user-service 同样的 Hutool JWT 签发 token，可指定签发时间（供改密吊销用例构造旧 token）。
+     */
+    private String signToken(long userId, String jti, String type, java.util.Date issuedAt) {
         byte[] keyBytes = TEST_SECRET.getBytes(StandardCharsets.UTF_8);
         JWT jwt = JWT.create()
                 .setKey(keyBytes)
                 .setPayload("userId", userId)
-                .setPayload("jti", jti);
+                .setPayload("jti", jti)
+                .setIssuedAt(issuedAt);
         if (type != null) {
             jwt.setPayload("type", type);
         }

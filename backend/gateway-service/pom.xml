@@ -43,7 +43,13 @@
         </dependency>
         <dependency>
             <groupId>cn.hutool</groupId>
-            <artifactId>hutool-all</artifactId>
+            <artifactId>hutool-jwt</artifactId>
+        </dependency>
+        <!-- FastJSON2：JwtAuthGlobalFilter 用 com.alibaba.fastjson2.JSON 解析 JWT payload。
+             common 已将 fastjson2 收窄为 test 作用域（不再传递），故 gateway 需自行声明 compile（版本由父 POM BOM 管理） -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
