@@ -17,7 +17,9 @@ import org.mockito.Mockito;
 
 /**
  * ConvMessageConsumer 单测（spec 第 18.1 节）。
- * <p>覆盖：正常消费 → 透传 preview → 调 updateLastMessage；解析失败 → 不抛异常（Phase 1 不重试）。
+ * <p>覆盖：正常消费 → 透传 preview → 调 updateLastMessage；解析失败/DB 异常 → 向上抛异常，
+ * 交由 Spring Kafka 的 {@code DefaultErrorHandler}（见 {@code KafkaConsumerConfig}）做
+ * FixedBackOff 重试，超限后投递 DLQ。消费端幂等由 updateLastMessage 内部 WHERE max_seq&lt;seq 保证。
  */
 class ConvMessageConsumerTest {
 
@@ -80,27 +82,29 @@ class ConvMessageConsumerTest {
     }
 
     @Test
-    void onMessageCreated_invalidJson_noExceptionNoCall() {
-        // 解析失败不抛异常（Phase 1 不重试，spec 第 16 节）
+    void onMessageCreated_invalidJson_propagateExceptionNoCall() {
+        // 解析失败向上抛（交由 DefaultErrorHandler 重试 → DLQ），且不应调 updateLastMessage
         ConsumerRecord<String, String> record = new ConsumerRecord<>("message.created", 0, 0, "1001", "not-a-json");
 
-        assertDoesNotThrow(() -> consumer.onMessageCreated(record));
+        assertThrows(Exception.class, () -> consumer.onMessageCreated(record));
 
         // 解析失败时不应调 updateLastMessage
         verify(convService, never()).updateLastMessage(any());
     }
 
     @Test
-    void onMessageCreated_updateLastMessageThrows_swallowException() throws Exception {
-        // convService.updateLastMessage 抛异常时，consumer 应吞掉异常（Phase 1 不重试）
+    void onMessageCreated_updateLastMessageThrows_propagateException() throws Exception {
+        // convService.updateLastMessage 抛异常时，consumer 应向上抛出（交给 DefaultErrorHandler 重试/DLQ）
         MessageCreatedEvent evt = new MessageCreatedEvent(
                 9003L, 1003L, 2003L, "user", 1, Map.of(), "preview", 30L, 0L, System.currentTimeMillis());
         String json = objectMapper.writeValueAsString(evt);
         ConsumerRecord<String, String> record = new ConsumerRecord<>("message.created", 0, 0, "1003", json);
         doThrow(new RuntimeException("db error")).when(convService).updateLastMessage(any());
 
-        // 不抛异常（consumer 内部 try-catch）
-        assertDoesNotThrow(() -> consumer.onMessageCreated(record));
+        // 抛出异常（由 DefaultErrorHandler 接管重试/DLQ）
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> consumer.onMessageCreated(record));
+        assertEquals("db error", thrown.getMessage());
         verify(convService).updateLastMessage(any());
     }
 }
