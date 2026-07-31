@@ -29,6 +29,9 @@ spring:
 dubbo:
   consumer:
     check: false
+  protocol:
+    # 随机端口：避免与本地联调中的真实 conv-service（20883）冲突导致 Address already in use
+    port: -1
 
 mybatis-plus:
   configuration:
