@@ -1,33 +1,84 @@
+# application.yml
+# 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
+# 业务配置（数据源、Redis、Kafka、Dubbo、雪花算法等）全部在 Nacos 配置中心对应 namespace 的 message-service.yml DataId 下
+# message-service 同时暴露 HTTP（8085，供 gateway 转发）+ Dubbo Provider（20884，供其他业务服务 RPC 调用）
 spring:
   application:
     name: message-service
-  datasource:
-    url: jdbc:postgresql://localhost:5432/aim
-    username: postgres
-    password: postgres
-    driver-class-name: org.postgresql.Driver
-  data:
-    redis:
-      host: localhost
-      port: 6379
-  kafka:
-    bootstrap-servers: localhost:9092
-    consumer:
-      group-id: message-service
   cloud:
     nacos:
+      # 公共连接属性，config / discovery 模块自动继承
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      # group 不能放公共层（discovery 默认 DEFAULT_GROUP，config 才用 AIM_GROUP）
+      config:
+        group: ${NACOS_GROUP:AIM_GROUP}
+        file-extension: yml
       discovery:
-        server-addr: localhost:8848
+        group: ${NACOS_GROUP:AIM_GROUP}
+  config:
+    import:
+      # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
+      # 第二条拉共享公共配置
+      - optional:nacos:message-service.yml
+      - optional:nacos:application.yml?group=COMMON_GROUP
+  jackson:
+    serialization:
+      write-bigdecimal-as-plain: true
+
+server:
+  port: ${SERVER_PORT:8085}
+  forward-headers-strategy: framework
 
 dubbo:
-  application:
-    name: message-service
-  protocol:
-    name: dubbo
-    port: 20884
-  registry:
-    address: nacos://localhost:8848
+  qos:
+    enable: false  # 禁用 QoS 运维端口（22222），避免多服务同主机启动时端口冲突
 
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
+# ============================================================
+# 以下为 Nacos DataId（message-service.yml，AIM_GROUP）应包含的业务配置模板
+# 敏感值用占位符，由环境变量注入；dev namespace bake 了 localhost 默认值
+# 本段为注释（不生效），仅作 Nacos 配置录入参考；实际值在 Nacos 配置中心维护
+# 注意：datasource url 必须带 currentSchema=%22msg%22（与 user/conv 的 %22xxx%22 风格一致）
+# ============================================================
+# spring:
+#   datasource:
+#     url: jdbc:postgresql://${DB_HOST:localhost}:5432/aim?currentSchema=%22msg%22&stringtype=unspecified
+#     username: ${DB_USER:postgres}
+#     password: ${DB_PASSWORD:postgres}
+#     driver-class-name: org.postgresql.Driver
+#   data:
+#     redis:
+#       host: ${REDIS_HOST:localhost}
+#       port: ${REDIS_PORT:6379}
+#   kafka:
+#     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+#     consumer:
+#       group-id: message-service
+#       auto-offset-reset: earliest
+#       # 关闭自动提交，避免消息处理失败时 offset 仍被提交导致消息丢失
+#       enable-auto-commit: false
+#       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+#       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+#     listener:
+#       # record 级 ack：每条消息处理成功后才提交 offset，配合 DefaultErrorHandler 重试
+#       ack-mode: record
+#     producer:
+#       key-serializer: org.apache.kafka.common.serialization.StringSerializer
+#       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+# dubbo:
+#   application:
+#     name: message-service
+#   protocol:
+#     name: dubbo
+#     port: 20884
+#   registry:
+#     # registry 地址必须带鉴权（user:pass@host?namespace&group），否则 Dubbo 匿名访问 Nacos OpenAPI 被 401 拒绝
+#     address: nacos://${NACOS_USERNAME:nacos}:${NACOS_PASSWORD:nacos}@${NACOS_ADDR:localhost:8848}?namespace=${NACOS_NAMESPACE:dev}&group=${NACOS_GROUP:AIM_GROUP}
+# mybatis-plus:
+#   configuration:
+#     map-underscore-to-camel-case: true   # 已在 COMMON_GROUP/application.yml 共享，可省略
+# aim:
+#   snowflake:
+#     worker-id: 2   # 已分配：user=0, conv=3, file=4；message 建议分配 2
