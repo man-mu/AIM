@@ -12,6 +12,14 @@
 - 任务完成后总结工作区改动并 `git commit`，message 必须符合 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) 规范（如 `feat:` / `fix:` / `docs:` / `refactor:`）
 - 任务完成后必须清理临时文件，不要将它们留在工作目录或提交到版本控制
 
+## 接口契约（最高优先级）
+
+- **唯一事实来源**：`API/api-v1-implemented.md` 是前后端接口的唯一契约（取代过时的 `API/api-v1.md`，后者仅作历史参考）。
+- **开发前必读**：任何涉及对外 HTTP 接口或 WebSocket 协议的开发/修复任务，动手前必须先阅读 `API/api-v1-implemented.md` 对应章节，实现必须符合契约。
+- **同步义务**：实现偏离契约（路径/字段/错误码/行为语义）时，**必须同时更新契约文档**——实现与文档进同一个 commit，禁止只改代码不留文档。
+- **前端 mock 同源**：前端 `frontend/src/mocks/` 的行为即契约，后端按契约实现；前端同学改 mock 契约时须回写文档。
+- **错误码**：HTTP 错误码定义在 `backend/common/.../exception/ErrorCode.java`，文案与编号以契约第 10 章为准，新增错误码须同步文档。
+
 ## 结构
 
 ```text
