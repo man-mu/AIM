@@ -5,7 +5,6 @@ import com.alibaba.fastjson2.JSON;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import lanshan.manmu.common.result.Result;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -30,7 +29,6 @@ import reactor.core.publisher.Mono;
  * <p>JWT 密钥与 user-service 共享（从 Nacos {@code COMMON_GROUP/application.yml} 读取 {@code aim.jwt.secret}）。
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
@@ -44,8 +42,20 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
 
     private final StringRedisTemplate redis;
 
-    @Value("${jwt.secret}")
-    private String jwtSecret;
+    private final String jwtSecret;
+
+    /**
+     * 构造器注入（AGENTS.md 规范：禁止字段注入，配置值亦通过构造器参数注入）。
+     * <p>{@code jwt.secret} 无兜底默认值，环境变量 {@code JWT_SECRET} 缺失时启动 fail-fast。
+     *
+     * @param redis      Redis 黑名单查询模板
+     * @param jwtSecret  JWT 签名密钥（与 user-service 共享，须由 Nacos/环境变量注入）
+     */
+    public JwtAuthGlobalFilter(StringRedisTemplate redis,
+                               @Value("${jwt.secret}") String jwtSecret) {
+        this.redis = redis;
+        this.jwtSecret = jwtSecret;
+    }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -72,6 +82,15 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             }
             jwt.validate(0);  // leeway=0，校验 exp/nbf/iat
 
+            // 3.5 type claim 校验：只接受 access token，拒绝 refreshToken 滥用
+            // 与 user-service UserServiceImpl.validateToken 中 !"access".equals(type) 写法对齐
+            Object typeObj = jwt.getPayload("type");
+            String type = typeObj == null ? null : String.valueOf(typeObj);
+            if (!"access".equals(type)) {
+                log.warn("jwt auth 失败: type 非法 type={}", type);
+                return unauthorized(exchange, "auth failed");
+            }
+
             // 4. Redis 黑名单查询
             Object jtiObj = jwt.getPayload("jti");
             String jti = jtiObj == null ? null : String.valueOf(jtiObj);
@@ -96,7 +115,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange.mutate().request(mutated).build());
         } catch (Exception ex) {
             log.warn("jwt auth failed: {}", ex.getMessage());
-            return unauthorized(exchange, "auth failed: " + ex.getMessage());
+            return unauthorized(exchange, "auth failed");
         }
     }
 

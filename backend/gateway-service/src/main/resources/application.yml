@@ -42,4 +42,4 @@ spring:
       port: ${REDIS_PORT:6379}
 
 jwt:
-  secret: ${JWT_SECRET:aim-jwt-secret-key-change-in-production}
+  secret: ${JWT_SECRET}

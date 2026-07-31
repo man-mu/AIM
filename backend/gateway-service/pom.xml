@@ -50,6 +50,19 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
+
+        <!-- 测试：JUnit 5 + Mockito + MockServerHttpRequest/WebExchange（spring-boot-starter-test 已包含） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- reactor-test：用于断言 Mono<Void> 的响应式结果（StepVerifier） -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>
