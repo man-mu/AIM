@@ -12,7 +12,7 @@ public interface SignalingRpcService {
     long getUnreadCount(long userId);
     void markRead(long notificationId, long userId);
     void markAllRead(long userId);
-    void deleteNotification(long notificationId);
+    void deleteNotification(long notificationId, long userId);
     boolean isOnline(long userId);
     BatchIsOnlineResp batchIsOnline(List<Long> userIds);
 }

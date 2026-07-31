@@ -20,7 +20,7 @@ public final class WsEvent {
     public static final String MESSAGE_EDITED    = "message.edited";
     public static final String PRESENCE          = "presence";
     public static final String READ_SYNC         = "read_sync";
-    public static final String TYPING_NOTIFY     = "typing";
+    public static final String TYPING_NOTIFY     = "typing.notify";
     public static final String TYPING_STOP_NOTIFY = "typing.stop";
     public static final String UNREAD_COUNT     = "unread_count";
     public static final String READ_RECEIPT      = "read_receipt";
