@@ -4,6 +4,7 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 创建会话请求。
@@ -11,7 +12,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateConversationReq {
+public class CreateConversationReq implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private int type;
     private long creatorId;

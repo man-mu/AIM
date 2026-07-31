@@ -4,6 +4,7 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 批量获取用户信息请求。
@@ -11,7 +12,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class BatchGetUserInfoReq {
+public class BatchGetUserInfoReq implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private List<Long> userIds;
 }

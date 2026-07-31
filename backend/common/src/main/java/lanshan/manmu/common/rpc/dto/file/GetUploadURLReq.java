@@ -3,6 +3,7 @@ package lanshan.manmu.common.rpc.dto.file;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 获取上传 URL 请求。
@@ -13,7 +14,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class GetUploadURLReq {
+public class GetUploadURLReq implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private String name;
     private String mimeType;

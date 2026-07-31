@@ -4,6 +4,7 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 查看会话列表响应。
@@ -11,7 +12,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ListConversationsResp {
+public class ListConversationsResp implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private List<ConversationDTO> conversations;
     private long total;

@@ -4,6 +4,7 @@ import java.util.List;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 通知 DTO。
@@ -11,7 +12,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class NotificationDTO {
+public class NotificationDTO implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private long id;
     private long userId;

@@ -3,6 +3,7 @@ package lanshan.manmu.common.rpc.dto.conv;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 会话 DTO。
@@ -10,7 +11,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class ConversationDTO {
+public class ConversationDTO implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private long id;
     private int type;

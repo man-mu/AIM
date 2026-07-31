@@ -3,6 +3,7 @@ package lanshan.manmu.common.rpc.dto.friend;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import java.io.Serializable;
 
 /**
  * 拉黑用户请求。
@@ -10,7 +11,8 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class BlockUserReq {
+public class BlockUserReq implements Serializable {
+    private static final long serialVersionUID = 1L;
 
     private long userId;
     private long targetUserId;
