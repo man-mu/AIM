@@ -2,6 +2,7 @@ package lanshan.manmu.user.service;
 
 import java.util.List;
 import lanshan.manmu.common.rpc.dto.user.*;
+import lanshan.manmu.user.dto.RefreshTokenResponse;
 
 /**
  * 用户服务接口。
@@ -12,7 +13,14 @@ public interface UserService {
     LoginResp login(LoginReq req);
     void logout(String accessToken, String refreshToken);
     ValidateTokenResp validateToken(String accessToken);
-    RefreshTokenResp refreshToken(String refreshToken);
+
+    /**
+     * 刷新 token：校验 refreshToken 合法性后签发新 accessToken，并轮换 refreshToken（旧 refreshToken 吊销）。
+     *
+     * @param refreshToken 旧的 refreshToken
+     * @return 含新 accessToken + 新 refreshToken 的响应（user-service 本地类型，支持轮换）
+     */
+    RefreshTokenResponse refreshToken(String refreshToken);
 
     /**
      * 查询用户资料。

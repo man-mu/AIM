@@ -39,7 +39,11 @@ public class UserRpcServiceImpl implements UserRpcService {
 
     @Override
     public RefreshTokenResp refreshToken(RefreshTokenReq req) {
-        return userService.refreshToken(req.getRefreshToken());
+        // userService.refreshToken 轮换返回本地 RefreshTokenResponse（含新 refreshToken），
+        // common RefreshTokenResp 契约仅含 accessToken，映射时丢弃 refreshToken（RPC 路径无实际消费者）。
+        lanshan.manmu.user.dto.RefreshTokenResponse resp =
+                userService.refreshToken(req.getRefreshToken());
+        return new RefreshTokenResp(resp.accessToken(), resp.accessExpire());
     }
 
     @Override

@@ -15,6 +15,7 @@ import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
 import lanshan.manmu.common.rpc.dto.user.*;
 import lanshan.manmu.common.util.SnowflakeIdWorker;
+import lanshan.manmu.user.dto.RefreshTokenResponse;
 import lanshan.manmu.user.mapper.UserDeviceMapper;
 import lanshan.manmu.user.mapper.UserMapper;
 import lanshan.manmu.user.model.entity.User;
@@ -48,6 +49,8 @@ public class UserServiceImpl implements UserService {
     private final byte[] jwtSecretBytes;
     private final long jwtExpireSec;
     private final long jwtRefreshSec;
+    private final int loginFailThreshold;
+    private final long loginLockSeconds;
 
     public UserServiceImpl(
             UserMapper userMapper,
@@ -57,7 +60,9 @@ public class UserServiceImpl implements UserService {
             PasswordEncoder passwordEncoder,
             @Value("${jwt.secret}") String jwtSecret,
             @Value("${jwt.expire-sec}") long jwtExpireSec,
-            @Value("${jwt.refresh-sec}") long jwtRefreshSec) {
+            @Value("${jwt.refresh-sec}") long jwtRefreshSec,
+            @Value("${user.login.fail-threshold:5}") int loginFailThreshold,
+            @Value("${user.login.lock-seconds:900}") long loginLockSeconds) {
         this.userMapper = userMapper;
         this.deviceMapper = deviceMapper;
         this.snowflake = snowflake;
@@ -66,6 +71,8 @@ public class UserServiceImpl implements UserService {
         this.jwtSecretBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
         this.jwtExpireSec = jwtExpireSec;
         this.jwtRefreshSec = jwtRefreshSec;
+        this.loginFailThreshold = loginFailThreshold;
+        this.loginLockSeconds = loginLockSeconds;
     }
 
     // ==================== 认证 ====================
@@ -73,7 +80,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public RegisterResp register(RegisterReq req) {
-        // 1. 参数校验
+        // 1. 参数校验（RPC 直调绕过 Controller @Valid 时由此兜底）
         if (req.getUsername() == null || req.getUsername().isEmpty()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "username 不能为空");
         }
@@ -81,6 +88,15 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.BAD_REQUEST, "password 不能为空");
         }
         validatePasswordStrength(req.getPassword());
+        // username 长度/字符集：超 VARCHAR(64) 会触发 DataIntegrityViolationException，提前拦截返回 400
+        validateUsername(req.getUsername());
+        // phone/email 长度兜底（DB 列宽 phone VARCHAR(20)、email VARCHAR(128)）
+        if (req.getPhone() != null && req.getPhone().length() > 20) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "phone 长度不能超过 20");
+        }
+        if (req.getEmail() != null && req.getEmail().length() > 128) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "email 长度不能超过 128");
+        }
 
         // 2. 唯一性检查（单次 OR 查询，减少 RTT；并发竞态由 DB 部分唯一索引兜底）
         boolean hasPhone = req.getPhone() != null && !req.getPhone().isEmpty();
@@ -169,6 +185,16 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.BAD_REQUEST);
         }
 
+        // 防爆破：按 account 维度 Redis 计数，连续失败达阈值后锁定 loginLockSeconds。
+        // 用户不存在与密码错误统一计入失败且统一返回 USER_PASSWORD_ERROR，避免账户枚举。
+        String failKey = "login_fail:" + req.getAccount();
+        String failCntStr = redisTemplate.opsForValue().get(failKey);
+        long failCnt = failCntStr == null ? 0 : Long.parseLong(failCntStr);
+        if (failCnt >= loginFailThreshold) {
+            log.warn("login 账户已锁定: account={}, failCnt={}", req.getAccount(), failCnt);
+            throw new BizException(ErrorCode.USER_FORBIDDEN, "登录失败次数过多，请稍后再试");
+        }
+
         // 三阶段查找：username → phone → email
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>()
                 .eq(User::getUsername, req.getAccount()));
@@ -182,14 +208,19 @@ public class UserServiceImpl implements UserService {
         }
         if (user == null) {
             log.warn("login 用户不存在: account={}", req.getAccount());
+            recordLoginFailure(failKey);
             throw new BizException(ErrorCode.USER_PASSWORD_ERROR);
         }
 
         // 密码校验
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
             log.warn("login 密码错误: userId={}", user.getId());
+            recordLoginFailure(failKey);
             throw new BizException(ErrorCode.USER_PASSWORD_ERROR);
         }
+
+        // 登录成功：清空失败计数
+        redisTemplate.delete(failKey);
 
         // JWT 双 Token
         TokenPair tokens = generateTokenPair(user.getId(), user.getUsername());
@@ -205,6 +236,18 @@ public class UserServiceImpl implements UserService {
         resp.setTokens(tokens);
         resp.setUser(toUserInfo(user));
         return resp;
+    }
+
+    /**
+     * 记录登录失败：INCR 计数 + 首次失败时设置锁定窗口 TTL。
+     * <p>首次失败（count==1）时设置 TTL = loginLockSeconds，使计数窗口与锁定窗口对齐；
+     * 后续失败沿用既有 TTL（不重置），保证锁定时长可预测。
+     */
+    private void recordLoginFailure(String failKey) {
+        Long count = redisTemplate.opsForValue().increment(failKey);
+        if (count != null && count == 1L) {
+            redisTemplate.expire(failKey, Duration.ofSeconds(loginLockSeconds));
+        }
     }
 
     @Override
@@ -247,7 +290,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public RefreshTokenResp refreshToken(String refreshToken) {
+    public RefreshTokenResponse refreshToken(String refreshToken) {
         JWT jwt = parseAndVerify(refreshToken);
         if (jwt == null) {
             log.warn("refreshToken 验签或过期校验失败");
@@ -271,14 +314,33 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.USER_TOKEN_INVALID);
         }
 
-        // 签发新 accessToken（refreshToken 不变，长效复用）
         try {
             long userId = Long.parseLong(String.valueOf(jwt.getPayload("userId")));
             String username = String.valueOf(jwt.getPayload("username"));
-            String accessToken = generateAccessToken(userId, username);
 
-            log.info("refreshToken 成功: userId={}", userId);
-            return new RefreshTokenResp(accessToken, System.currentTimeMillis() + jwtExpireSec * 1000);
+            // 改密后吊销改密前签发的 refreshToken：iat 早于改密时间戳则拒绝
+            if (isTokenIssuedBeforePwdChange(userId, extractIssuedAt(jwt))) {
+                log.info("refreshToken 早于改密时间,已吊销: userId={}", userId);
+                throw new BizException(ErrorCode.USER_TOKEN_INVALID);
+            }
+
+            long now = System.currentTimeMillis();
+            long accessExpireAt = now + jwtExpireSec * 1000;
+            long refreshExpireAt = now + jwtRefreshSec * 1000;
+            String newAccessToken = generateAccessToken(userId, username, now, accessExpireAt);
+            String newRefreshToken = generateRefreshToken(userId, now, refreshExpireAt);
+
+            // 轮换：把旧 refreshToken 的 jti 加入黑名单（复用 revoked_token:{jti} 机制），TTL 取剩余有效期
+            long oldExpiresAt = extractExpiration(jwt);
+            long ttl = (oldExpiresAt - now) / 1000;
+            if (ttl > 0) {
+                redisTemplate.opsForValue().set("revoked_token:" + jti, "1", Duration.ofSeconds(ttl));
+            }
+
+            log.info("refreshToken 轮换成功: userId={}, oldJti={}", userId, jti);
+            return new RefreshTokenResponse(newAccessToken, newRefreshToken, accessExpireAt, refreshExpireAt);
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("refreshToken 解析 userId/username 失败: {}", e.getMessage());
             throw new BizException(ErrorCode.USER_TOKEN_INVALID);
@@ -313,6 +375,12 @@ public class UserServiceImpl implements UserService {
         try {
             long userId = Long.parseLong(String.valueOf(jwt.getPayload("userId")));
             long expiresAt = extractExpiration(jwt);
+
+            // 改密后吊销改密前签发的 token：iat 早于改密时间戳则拒绝
+            if (isTokenIssuedBeforePwdChange(userId, extractIssuedAt(jwt))) {
+                log.info("validateToken token 早于改密时间,已吊销: userId={}", userId);
+                return invalidTokenResp();
+            }
 
             ValidateTokenResp resp = new ValidateTokenResp();
             resp.setValid(true);
@@ -450,6 +518,14 @@ public class UserServiceImpl implements UserService {
                 .set("password_hash", passwordEncoder.encode(newPwd))
                 .set("updated_at", OffsetDateTime.now());
         userMapper.update(null, wrapper);
+
+        // 改密后吊销该用户改密前签发的全部 token：记录改密时间戳（epoch millis），
+        // validateToken/refreshToken 比对 token 的 iat 是否早于该时间戳，早于则拒绝。
+        // TTL 取 refreshToken 最长生命周期（jwtRefreshSec），超过该时长旧 token 自然过期，无需继续保留。
+        long now = System.currentTimeMillis();
+        redisTemplate.opsForValue().set("pwd_changed:" + userId,
+                String.valueOf(now), Duration.ofSeconds(jwtRefreshSec));
+        log.info("updatePassword 已记录改密时间戳,吊销改密前 token: userId={}", userId);
     }
 
     @Override
@@ -533,16 +609,7 @@ public class UserServiceImpl implements UserService {
         long refreshExpireAt = now + jwtRefreshSec * 1000;
 
         String accessToken = generateAccessToken(userId, username, now, accessExpireAt);
-
-        String refreshToken = JWT.create()
-                .setJWTId(UUID.randomUUID().toString())
-                .setPayload("userId", userId)
-                .setPayload("type", "refresh")
-                .setIssuer("aim")
-                .setIssuedAt(new Date(now))
-                .setExpiresAt(new Date(refreshExpireAt))
-                .setKey(jwtSecretBytes)
-                .sign();
+        String refreshToken = generateRefreshToken(userId, now, refreshExpireAt);
 
         TokenPair pair = new TokenPair();
         pair.setAccessToken(accessToken);
@@ -550,6 +617,21 @@ public class UserServiceImpl implements UserService {
         pair.setAccessExpire(accessExpireAt);
         pair.setRefreshExpire(refreshExpireAt);
         return pair;
+    }
+
+    /**
+     * 生成 refreshToken。refresh 轮换时复用此方法签发新 refreshToken。
+     */
+    private String generateRefreshToken(long userId, long now, long expireAt) {
+        return JWT.create()
+                .setJWTId(UUID.randomUUID().toString())
+                .setPayload("userId", userId)
+                .setPayload("type", "refresh")
+                .setIssuer("aim")
+                .setIssuedAt(new Date(now))
+                .setExpiresAt(new Date(expireAt))
+                .setKey(jwtSecretBytes)
+                .sign();
     }
 
     /**
@@ -634,6 +716,22 @@ public class UserServiceImpl implements UserService {
     }
 
     /**
+     * 用户名校验：长度 3~64（对齐 DB username VARCHAR(64)），仅允许字母、数字、下划线。
+     * 超 VARCHAR(64) 会触发 DataIntegrityViolationException 落 500，故提前拦截返回 400。
+     */
+    private void validateUsername(String username) {
+        if (username.length() < 3 || username.length() > 64) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "username 长度需 3~64 个字符");
+        }
+        for (int i = 0; i < username.length(); i++) {
+            char c = username.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '_')) {
+                throw new BizException(ErrorCode.BAD_REQUEST, "username 只能含字母、数字、下划线");
+            }
+        }
+    }
+
+    /**
      * 解析并校验 JWT：① 签名校验 ② 过期校验。失败一律返回 null。
      */
     private JWT parseAndVerify(String token) {
@@ -664,6 +762,46 @@ public class UserServiceImpl implements UserService {
             return v < 1_000_000_000_000L ? v * 1000L : v;
         }
         return 0L;
+    }
+
+    /**
+     * 从 JWT 提取签发时间 iat（epoch millis），逻辑同 {@link #extractExpiration}。
+     */
+    private long extractIssuedAt(JWT jwt) {
+        Object iat = jwt.getPayload("iat");
+        if (iat instanceof java.util.Date d) {
+            return d.getTime();
+        }
+        if (iat instanceof Number n) {
+            long v = n.longValue();
+            return v < 1_000_000_000_000L ? v * 1000L : v;
+        }
+        return 0L;
+    }
+
+    /**
+     * 判断 token 是否在用户最近一次改密之前签发。
+     * <p>改密时记录 {@code pwd_changed:{userId}}=改密时间戳（epoch millis）；
+     * 若 token 的 iat 早于该时间戳，说明是改密前的旧 token，应拒绝。
+     *
+     * @param userId token 携带的 userId
+     * @param iat    token 的签发时间（epoch millis）
+     * @return true 表示 token 早于改密时间，应吊销；false 表示无改密记录或 token 是改密后签发
+     */
+    private boolean isTokenIssuedBeforePwdChange(long userId, long iat) {
+        if (iat <= 0) {
+            return false;
+        }
+        String tsStr = redisTemplate.opsForValue().get("pwd_changed:" + userId);
+        if (tsStr == null) {
+            return false;
+        }
+        try {
+            return iat < Long.parseLong(tsStr);
+        } catch (NumberFormatException e) {
+            log.warn("pwd_changed 时间戳格式异常: userId={}, value={}", userId, tsStr);
+            return false;
+        }
     }
 
     /**
