@@ -1,7 +1,7 @@
 /**
  * 后端错误码 → 用户可读文案。
  *
- * 码段划分（见 document/api-v1-implemented.md §1.2 / §6）：
+ * 码段划分（见 document/api-v1.md §1.2 / §6）：
  *   400/401/500 通用；10xxx user；20xxx friend；30xxx conv；
  *   40xxx message；50xxx file；60xxx notification/signaling。
  */

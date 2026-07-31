@@ -5,7 +5,7 @@ import type { MockHandler } from '../engine/types';
 import { asBoolean, asId, asIdArray, asNumber, asRecord, asString, pageParams, paginate, type HandlerContext } from './context';
 
 /**
- * Conversation 域 handlers（api-v1-implemented.md §4）。
+ * Conversation 域 handlers（api-v1.md §4）。
  * 成员变更 / 公告等操作会追加系统消息（msgType=7）并推送实时事件，
  * 让前端在 mock 环境下也能体验完整的数据流闭环。
  */

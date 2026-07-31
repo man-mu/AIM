@@ -9,7 +9,7 @@ export type FileAccess = 1 | 2 | 3;
 /** 文件状态：0=PENDING 1=CONFIRMED 2=DELETED。 */
 export type FileStatus = 0 | 1 | 2;
 
-/** FileInfo（api-v1-implemented.md 附录 C）。 */
+/** FileInfo（api-v1.md 附录 C）。 */
 export interface FileInfo {
   fileId: Int64;
   name: string;

@@ -6,7 +6,7 @@ export type ConversationType = 1 | 2;
 /** 成员角色：0=成员 1=群主 2=管理员。 */
 export type MemberRole = 0 | 1 | 2;
 
-/** ConversationDTO（api-v1-implemented.md 附录 B）。 */
+/** ConversationDTO（api-v1.md 附录 B）。 */
 export interface ConversationDTO {
   id: Int64;
   type: ConversationType;

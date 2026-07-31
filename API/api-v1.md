@@ -1,1727 +1,342 @@
-# AIM API v1 接口文档（历史规划）
+# AIM API v1 接口文档（当前契约）
 
-> **版本**：v1.0.0-draft（Phase 1 核心 IM，不含 Bot/AI 模块）
-
-> ## ⚠️ 本文档已过时（2026-07-31 起）
+> **本文档是前后端接口的唯一契约（Single Source of Truth），覆盖 IM 基础功能全部八域。**
 >
-> 本文档为项目初始规划契约（draft 版），部分内容与当前实现不符（端口 8080、接口路径、字段、错误码语义等均已变化）。
-> **当前契约以 [api-v1-implemented.md](./api-v1-implemented.md) 为准（唯一事实来源）**，本文档仅作历史参考。
+> - 覆盖全部域：Auth / User / Friend / Conversation / Message / File / Notification / WebSocket
+> - 每个接口标注实现状态：✅ 已实现（后端已落地并测试）/ ⏳ 待实现（后端未开发，契约以前端 mock 为准）
+> - **维护铁律**：后端实现偏离本文档必须同步更新本文档（实现与文档同 commit）；前端 mock 变更必须回写本文档
 >
-
-> **Base URL**：`http://{host}:8080/api/v1`
-> **Content-Type**：`application/json`
-> **字符编码**：UTF-8
-> **日期格式**：epoch 毫秒时间戳（`number`）
+> 契约基线时间：2026-07-31（依据：后端实际实现 + 前端 mock handlers 全量提取核对；2026-08-01 合并原 `api-v1-implemented.md` 为唯一文档）
 
 ---
 
 ## 1. 通用约定
 
-### 1.1 统一响应格式
+### 1.1 网络与入口
 
-所有接口返回 JSON，外层结构为：
+| 项 | 约定 |
+|---|---|
+| 网关 Base URL | `http://localhost:9080/api/v1`（`gateway-service`，端口 9080） |
+| WS 地址 | `ws://localhost:8081/ws`（`ws-gateway-service`，连接参数 `?token=<accessToken>&device_id=<deviceId>`） |
+| 网关路由 | `/api/v1/auth/**`、`/api/v1/users/**` → user-service；`/api/v1/convs/**` → conv-service；`/api/v1/files/**` → file-service；friend/message/notification 路由**待实现** |
+| 鉴权白名单 | `POST /auth/login`、`POST /auth/register`、`POST /auth/refresh`、`/public/**`（前缀匹配） |
 
-```json
-{
-  "code": 0,           // 0=成功, 非0=失败（见错误码表）
-  "message": "success",
-  "data": { ... }      // 具体数据，失败时为 null
-}
-```
-
-分页接口中 `data` 结构为：
+### 1.2 统一响应壳 Result\<T\>
 
 ```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [ ... ],            // 数据列表
-    "total": 100,               // 总数
-    "pageNum": 1,               // 当前页码（从 1 开始）
-    "pageSize": 20              // 每页数量
-  }
-}
+{ "code": 0, "message": "success", "data": { } }
 ```
 
-消息列表使用游标分页：
+- `code === 0` 成功；非 0 失败时 `data` 为 `null`
+- **业务错误**：HTTP 状态码仍为 **200**，仅 body 中 code 非 0
+- **鉴权失败**（网关拦截）：HTTP **401** + `{code:401, message:<失败原因>, data:null}`（message 为动态文案，非固定错误码）
+- 401 / 10005 / 10006 触发前端静默刷新（access 剩余 <30s 主动刷新；刷新失败清会话）
 
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [ ... ],
-    "nextCursor": "50",         // 下一页游标，为 null 表示已到最后一页
-    "hasMore": true,
-    "total": 100
-  }
-}
-```
+### 1.3 鉴权
 
-### 1.2 认证方式
+- 请求头 `Authorization: Bearer <accessToken>`
+- 网关校验链：签名 → 过期（leeway=0）→ `type=access` → jti 不在黑名单 → 未在改密后吊销（`pwd_changed:{userId}` 与 iat 比对）
+- 网关注入 `X-User-Id` header，服务端一律以它为身份来源（**请求体/query 里的 userId 类字段不生效**）
+- refresh token：`type=refresh`，有效期 30 天（默认）；**每次 refresh 轮换**（旧 refreshToken 立即失效）
 
-除注册和登录外，所有接口需在 Header 携带 JWT：
+### 1.4 分页
 
-```
-Authorization: Bearer <access_token>
-```
+- 参数：`pageNum`（默认 1，最小 1）、`pageSize`（服务端钳制：`<=0 → 20`，`>100 → 100`；各接口默认值见接口表）
+- 列表响应统一 `{ list: T[], total: number }` 或按接口表
 
-Token 通过登录接口获取，有效期 2 小时。
+### 1.5 时间与大整数
 
-### 1.3 错误码段
+- 时间戳一律 **epoch 毫秒**；唯一例外 `muteUntil` / `muteUntilSec` 为 **epoch 秒**（0 = 未禁言或永久禁言）
+- 所有 id/seq 为 Java long，前端经 json-bigint 承接为**十进制字符串**（wire 类型 `Int64 = string | number`）
+- `balance` 为 BigDecimal，序列化为 JSON number（非 string）
 
-| 段 | 服务 | 示例 |
+### 1.6 批量接口
+
+- `POST /users/batch`、`POST /files/batch` 请求体**直接是 JSON 数组**（非对象包裹）
+- 数量上限 500（超出 → code 400）；空数组返回空结果不报错
+
+### 1.7 布尔字段
+
+- JSON 键名**无 `is-` 前缀**：`mutedAll` / `muted` / `pinned` / `member`（Lombok getter 推导）
+
+### 1.8 幂等
+
+- 单聊创建：重复创建返回既有会话（成功，不报错）
+- 消息发送：`clientMsgId`（`c-<uuid>`）按 `(conversationId, clientMsgId)` 幂等，重复 → 40004
+
+---
+
+## 2. Auth 域（✅ 已实现）
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 注册 | `POST /auth/register`（白名单） | `username` 必填 3-64 且 `^[A-Za-z0-9_]+$`；`password` 必填 6-32 且含字母+数字；`phone`? ≤20；`email`? ≤128；`deviceId`? ≤128；`platform`? ≤32 | `userId`、`tokens{accessToken, refreshToken, accessExpire, refreshExpire}`、`user`（本人完整视图） | 400；10002 用户名已存在；10003 手机号已注册；10009 邮箱已注册 |
+| 登录 | `POST /auth/login`（白名单） | `account` 必填（用户名/手机号/邮箱）；`password` 必填；`deviceId`?；`platform`? | 同注册响应 | 400；**10004**（用户不存在与密码错误统一，防枚举）；**10008**（连续失败 5 次锁 15 分钟） |
+| 刷新 | `POST /auth/refresh`（白名单） | `refreshToken` 必填 | **4 字段**：`accessToken`、`refreshToken`（新）、`accessExpire`、`refreshExpire`。**轮换语义**：旧 refreshToken 一次性吊销 | 10005 |
+| 登出 | `POST /auth/logout`（需鉴权） | Header Bearer；body `{accessToken?, refreshToken?}`（accessToken 字段不生效，实际取 header） | `null`（恒成功；有效 token 入黑名单，无效静默忽略） | — |
+| 校验 | `GET /auth/validate`（需鉴权） | 无 | `{valid: boolean, userId, expiresAt}`；一切无效返回 `valid=false`（HTTP 200 code 0，不抛业务错误码） | — |
+
+---
+
+## 3. User 域（✅ 已实现）
+
+`UserInfo`：`id`、`username`、`phone`、`email`、`avatar`、`gender`(0/1/2)、`bio`、`birthday`、`createdAt`、`updatedAt`、`balance`
+
+**隐私规则（重要）**：
+- 本人（`/me` 或 `{userId} == X-User-Id`）：完整 phone/email/balance
+- **他人视角一律脱敏**：phone 前 3 后 4（≤7 位原样）、email 仅保留 @ 前首字符、`balance` 恒为 0
+- `POST /users/batch` 即使包含本人也**一律脱敏**
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 我的资料 | `GET /users/me` | Header X-User-Id | `UserInfo`（完整） | 10001 |
+| 更新资料 | `PUT /users/me` | 全可选：`avatar`?、`gender`?(0/1/2)、`bio`?、`birthday`?、`phone`?（空串清空）、`email`?（空串清空） | `UserInfo`（完整） | 400；10001；10003；10009 |
+| 修改密码 | `PUT /users/me/password` | `oldPassword` 必填；`newPassword` 必填 6-32 含字母+数字 | `null` | 400；10001；10004 旧密码错误 |
+| 用户详情 | `GET /users/{userId}` | PathVariable | `UserInfo`（他人视图脱敏） | 10001；400（路径非数字） |
+| 批量查询 | `POST /users/batch` | **裸数组** `[123,456]`（≤500） | `{users: UserInfo[]}`（一律脱敏，不存在则缺失） | 400 |
+| 搜索用户 | `POST /users/search?keyword=&pageNum=&pageSize=` | **参数走 query**；`keyword` 必填；pageSize 默认 20 | `{users: UserInfo[]（脱敏）, total}` | 400 |
+| 改密副作用 | — | — | 改密后**改密前签发的全部 token 即刻失效**（网关/validate/refresh 三处校验） | — |
+
+> ⚠️ `search` 仅匹配 **username**（LIKE，通配符已转义），不匹配手机号/邮箱——与初始规划不同，按实现定稿。
+
+---
+
+## 4. Friend 域（⏳ 待实现，契约按前端 mock 定稿）
+
+**状态码**：`FriendRequestStatus` 1=待处理 2=已接受 3=已拒绝 4=已取消
+
+**DTO**：
+- `FriendRequestDTO`：`requestId`、`fromUserId`、`fromUsername`、`fromAvatar`、`toUserId`、`toUsername`、`toAvatar`、`message`、`status`(1-4)、`createdAt`、`updatedAt`
+- `FriendDTO`：`userId`、`username`、`avatar`、`remark`、`groupId`、`groupName`（'0' = 默认分组）、`status`('online'/'offline')、`createdAt`
+- `FriendGroupDTO`：`groupId`、`name`、`friendCount`、`createdAt`
+- `BlacklistEntryDTO`：`userId`、`username`、`avatar`、`createdAt`
+- 分页壳 `PagedList<T>`：`{list: T[], total, pageNum, pageSize}`
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 发申请 | `POST /friends/requests` | `toUserId`；`message` | `{requestId}`（有 pending 时幂等返回原申请） | 20001；20004；20006；20007 |
+| 待处理申请 | `GET /friends/requests/pending` | query：`pageNum`?、`pageSize`?（默认 50） | `PagedList<FriendRequestDTO>`（仅 status=1 incoming） | — |
+| 已发送申请 | `GET /friends/requests/sent` | query：`pageNum`?、`pageSize`?（默认 50） | `PagedList<FriendRequestDTO>`（outgoing 全状态） | — |
+| 接受申请 | `POST /friends/requests/{requestId}/accept` | body `{}` | `FriendRequestDTO`（status→2，双方建好友） | 20002 |
+| 拒绝申请 | `POST /friends/requests/{requestId}/reject` | body `{}` | `FriendRequestDTO`（status→3） | 20002 |
+| 取消申请 | `DELETE /friends/requests/{requestId}` | — | `null`（status→4，仅发起人） | 20002 |
+| 好友列表 | `GET /friends` | query：`groupId`?（0=默认）、`pageNum`?、`pageSize`?（默认 100） | `PagedList<FriendDTO>` | — |
+| 分组列表 | `GET /friends/groups` | — | `{list: FriendGroupDTO[], total}`（内置 groupId='0' 默认分组） | — |
+| 建分组 | `POST /friends/groups` | `name`（空则落"新建分组"） | `{groupId, name}` | — |
+| 重命名分组 | `PUT /friends/groups/{groupId}` | `name` | `{groupId, name}` | 20005 |
+| 删除分组 | `DELETE /friends/groups/{groupId}` | — | `null`（组内好友回落默认分组） | 20005 |
+| 黑名单 | `GET /friends/blacklist` | query：`pageNum`?、`pageSize`?（默认 100） | `PagedList<BlacklistEntryDTO>` | — |
+| 拉黑 | `POST /friends/blacklist/{userId}` | body `{}` | `null`（拉黑即解除好友+取消双方 pending；重复拉黑幂等） | 20004 不能拉黑自己 |
+| 取消拉黑 | `DELETE /friends/blacklist/{userId}` | — | `null` | 20002 不在黑名单 |
+| 删除好友 | `DELETE /friends/{friendId}` | — | `null` | 20003 |
+| 设置备注 | `PUT /friends/{friendId}/remark` | `remark` | `null` | 20003 |
+| 移动分组 | `PUT /friends/{friendId}/group` | `groupId`（0=默认） | `null` | 20003；20005 |
+
+> ⚠️ 与初始规划差异（按前端定稿）：拉黑路径为 `/friends/blacklist/{userId}`（非 `/friends/{userId}/block`）；分组字段 `groupId`（非 `id`）；黑名单字段 `createdAt`（非 `blockedAt`）；分组列表外层 `list`（非 `groups`）。
+
+---
+
+## 5. Conversation 域（✅ 已实现）
+
+**DTO**：
+- `ConversationDTO`：`id`、`type`(1=单聊 2=群聊)、`name`、`avatar`、`ownerId`、`memberCount`、`maxSeq`、`lastMessageId`、`lastMessagePreview`、`announcement`、`mutedAll`(boolean)、`createdAt`、`updatedAt`、`unreadCount`
+- `ConversationMemberDTO`：`userId`、`username`、`avatar`、`role`(**1=OWNER 2=ADMIN 3=MEMBER**)、`alias`、`joinedAt`、`lastReadSeq`、`muted`(boolean)、`muteUntil`(epoch 秒)、`memberType`(1=user 2=bot)、`botId`
+- `ConversationSettingsData`：`muted`(boolean)、`pinned`(boolean)、`nickname`
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 创建会话 | `POST /convs` | type=1：`type`、`peerUserId`；type=2：`type`、`name`(必填≤32)、`avatar`?、`memberIds`? | `{conversationId, conversation}`（**单聊幂等**：已存在返回原会话；不能与自己建单聊） | 400；30008 |
+| 会话列表 | `GET /convs` | query：`pageNum`?、`pageSize`?（默认 20，上限 100） | `{conversations: ConversationDTO[], total}`（按 maxSeq 降序） | — |
+| 会话详情 | `GET /convs/{conversationId}` | PathVariable | `ConversationDTO` | **30001 优先**；30004 非成员 |
+| 成员列表 | `GET /convs/{conversationId}/members` | query：`pageNum`?、`pageSize`?（默认 50，上限 100） | `{members: ConversationMemberDTO[], total}`（OWNER→ADMIN→MEMBER，同级按加入时间） | 30001；30004 |
+| 邀请入群 | `POST /convs/{conversationId}/members/invite` | `userIds`（请求内自动去重） | `{addedUserIds, alreadyMemberIds}`（不存在的用户静默跳过；超限整事务回滚） | 30001；30004；30005；30008 |
+| 移出群聊 | `POST /convs/{conversationId}/members/kick` | `userIds` | `null`（管理员不能踢同级/上级；**OWNER 自退自动转移群主**给最早加入成员，无成员则 ownerId=0） | 30001；30004；30005；30003 |
+| 禁言 | `PUT /convs/{conversationId}/members/{userId}/mute` | `durationSeconds`（**秒**，0=永久禁言） | `null` | 30001；30004；30005；30003 |
+| 解除禁言 | `DELETE /convs/{conversationId}/members/{userId}/mute` | — | `null`（**清除禁言**：muted=false/muteUntil=0；与永久禁言 muted=true/0 区分） | 30001；30004；30005；30003 |
+| 转让群主 | `POST /convs/{conversationId}/transfer` | `newOwnerId` | `null`（原群主降为成员） | 30001；30004；30005；30009 转给自己；30003 |
+| 设置公告 | `PUT /convs/{conversationId}/announcement` | `content`（≤500，空串=清除） | `null` | 30001；30004；30005；400 |
+| 删除公告 | `DELETE /convs/{conversationId}/announcement` | — | `null` | 同上 |
+| 查设置 | `GET /convs/{conversationId}/settings` | — | `{muted, pinned, nickname}`（**不校验成员身份**） | — |
+| 改设置 | `PUT /convs/{conversationId}/settings` | 全可选：`isMuted`?、`isPinned`?、`nickname`?（null 不更新；不校验成员身份） | `null` | — |
+| 标记已读 | `PUT /convs/{conversationId}/read` | `seq`（UPSERT GREATEST 只增不减） | `null` | 30001；30004 |
+
+> ⚠️ 与初始规划差异（按实现定稿）：role 枚举 1=OWNER/2=ADMIN/3=MEMBER（前端 mock 曾用 0/1/2）；settings 键名 `muted`/`pinned` 无 is- 前缀；群名上限 32、公告上限 500。
+
+---
+
+## 6. Message 域（⏳ 待实现，契约按前端 mock 定稿）
+
+**枚举**：`MsgType` 1=文本 2=图片 3=文件 4=视频 5=语音 6=位置 7=系统；`MessageStatus` 1=正常 2=已撤回 3=已删除
+**内容类型**：`TextContent{text, mentionUserIds?, mentionAll?}`；`ImageContent{fileId, url, thumbnailUrl, width, height, size, format}`；`FileContent{fileId, url, name, size, ext, mimeType}`；`SystemContent{action, detail, relatedUserIds?, actorId?, actorType?, payload?}`
+**DTO**：`MessageDTO{messageId, conversationId, seq, fromUserId, msgType, status, content（已撤回为 {}）, replyToId, replyToPreview, editCount, editedAt, createdAt}`
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 发送消息 | `POST /messages/send` | `conversationId`；`msgType`；`content`；`replyToId`?；`clientMsgId`（幂等键） | `{messageId, seq, createdAt}`（发送者自动 markRead） | 40004 重复发送；30004；30006 被禁言；30007 全员禁言 |
+| 回复消息 | `POST /messages/{messageId}/reply` | 同 send body | 同 send | 同 send |
+| 消息列表 | `GET /messages/{conversationId}` | query：`cursor`（**seq 游标，0=最新，降序**）；`limit`?（默认 20，上限 50） | `{list: MessageDTO[], nextCursor: string\|null, hasMore, total}` | 30001；30004 |
+| 增量同步 | `GET /messages/{conversationId}/sync` | query：`fromSeq`?（默认 0，**升序**）；`limit`?（默认 50，上限 200） | `{list: MessageDTO[], hasMore, maxSeq}` | 30001；30004 |
+| 撤回 | `POST /messages/{messageId}/recall` | body `{}` | `null`（推下行 `message.recalled`） | 40001；40002 超 120s；40005 非本人且非管理 |
+| 编辑 | `PUT /messages/{messageId}` | `newContent` | `null`（推下行 `message.edited`） | 40001；40003 超 120s；40005 仅作者 |
+| 删除 | `DELETE /messages/{messageId}` | `deleteForAll`（true=全员删除需本人或管理；false/缺省=仅自己隐藏） | `null` | 40001；40005 |
+| 搜索 | `GET /messages/search` | query：`keyword`；`conversationId`?（缺省='0'=全部）；`pageNum`?；`pageSize`? | `{list: MessageDTO[], total, pageNum, pageSize}`（仅文本+正常状态，createdAt 降序） | — |
+
+**时间窗**：撤回/编辑窗口 120 秒（`RECALL_WINDOW` / `EDIT_WINDOW`）
+
+---
+
+## 7. File 域（✅ 已实现）
+
+**上传三步**：`POST /files/upload-url` → 直传 `uploadUrl`（对象存储预签名 URL）→ `POST /files/confirm`
+
+`FileInfo`：`fileId`、`name`、`key`、`size`、`mimeType`、`ext`、`width`、`height`、`duration`、`md5`、`purpose`(1=附件 2=头像)、`access`(1=私有 2=会话内 3=公开)、`uploaderId`、`bucket`、`status`(0=PENDING 1=CONFIRMED 2=DELETED)、`createdAt`
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 申请上传 | `POST /files/upload-url` | `name` 必填；`mimeType` 必填；`size` 必填>0；`purpose`；`access`（**expiresIn 无效，服务端固定 1800s**） | `{fileId, uploadUrl, key, expiresAt}` | 400；50004（类型不支持/SVG）；50003（超限）；50002 |
+| 确认上传 | `POST /files/confirm` | `fileId`；`md5`?（仅记录不校验） | `{file: FileInfo}` | 50001；50007 非上传者；400 状态非 PENDING；50002 对象未上传；50003 实际超声明（拒绝并删对象） |
+| 下载链接 | `GET /files/{fileId}/download` | PathVariable（无 query） | `{downloadUrl, expiresAt, file}` | 50001；50005 PENDING；50006 DELETED |
+| 文件信息 | `GET /files/{fileId}/info` | PathVariable | `FileInfo` | 50001；50005；50006 |
+| 删除文件 | `DELETE /files/{fileId}` | PathVariable（无 body） | `null`（软删 status→2；仅上传者；**非幂等**：重复删 → 50006） | 50001；50007；50006 |
+| 批量信息 | `POST /files/batch` | **裸数组**（≤500） | **`FileInfo[]`（裸数组，非对象包裹）**（仅 CONFIRMED） | 400 |
+
+**大小限制**：`purpose=2`（头像）上限 **5MB**；其余一律 **100MB**；`image/svg+xml` 禁止（XSS）
+**访问控制（Phase 1）**：任何登录用户可下载 CONFIRMED 文件（不校验成员/上传者关系；Phase 2 接入会话级校验）
+
+---
+
+## 8. Notification 域（⏳ 待实现，契约按前端 mock 定稿）
+
+`NotificationDTO`：`id`、`userId`、`type`(1=系统 2=审核 3=Bot)、`title`、`content`、`isRead`(boolean)、`referenceId`、`createdAt`
+
+| 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
+|---|---|---|---|---|
+| 通知列表 | `GET /notifications` | query：`pageNum`?、`pageSize`?（默认 20）、`type`?（0=不过滤）、`isRead`?（'true'/'false'） | `PagedList<NotificationDTO>`（createdAt 降序） | — |
+| 未读数 | `GET /notifications/unread-count` | — | `{count}` | — |
+| 标记已读 | `POST /notifications/{notificationId}/read` | body `{}` | `null` | 60001 |
+| 全部已读 | `POST /notifications/read-all` | body `{}` | `null` | — |
+| 删除 | `DELETE /notifications/{notificationId}` | — | `null` | 60001 |
+
+---
+
+## 9. WebSocket 协议（⏳ 待实现，事件名已按后端常量定稿）
+
+**帧格式**（上下行统一）：`{ event: string, data: unknown, timestamp: number }`
+**连接**：`ws://<host>/ws?token=<accessToken>&device_id=<deviceId>`；心跳 `ping` 30s/次；90s 无下行帧判断线；重连指数退避 1s→30s
+
+### 9.1 上行（客户端 → 服务端）
+
+| 事件 | data | 说明 |
 |---|---|---|
-| 10xxx | user-service | 10001 用户不存在 |
-| 20xxx | friend-service | 20001 已是好友 |
-| 30xxx | conv-service | 30001 会话不存在 |
-| 40xxx | message-service | 40001 消息不存在 |
-| 50xxx | file-service | 50001 文件不存在 |
-| 60xxx | signaling-service | 60001 通知不存在 |
-
-完整错误码表见 [§9 错误码参考](#9-错误码参考)。
-
----
-
-## 2. Auth 认证
-
-### 2.1 注册
-
-```
-POST /auth/register
-```
-
-**Request Body**:
-
-```json
-{
-  "username": "zhangsan",      // 必填, 3~32字符
-  "password": "Abc@123456",    // 必填, 6~32字符
-  "phone": "13800138000",     // 可选
-  "email": "zhangsan@foo.com", // 可选
-  "deviceId": "device-uuid",   // 必填, 设备唯一标识
-  "platform": "web"            // 必填, ios/android/web
-}
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "userId": 1234567890123456789,
-    "tokens": {
-      "accessToken": "eyJhbGciOi...",
-      "refreshToken": "eyJhbGciOi...",
-      "accessExpire": 1707123400000,
-      "refreshExpire": 1707728200000
-    },
-    "user": {
-      "id": 1234567890123456789,
-      "username": "zhangsan",
-      "phone": "138****8000",
-      "email": "zhan****@foo.com",
-      "avatar": "",
-      "gender": 0,
-      "bio": "",
-      "birthday": 0,
-      "createdAt": 1707100000000,
-      "updatedAt": 1707100000000,
-      "balance": 0
-    }
-  }
-}
-```
-
-### 2.2 登录
-
-```
-POST /auth/login
-```
-
-**Request Body**:
-
-```json
-{
-  "account": "zhangsan",       // 用户名/手机号/邮箱
-  "password": "Abc@123456",
-  "deviceId": "device-uuid",
-  "platform": "web"
-}
-```
-
-**Response**：同注册返回，`code=0` 且 `data` 结构一致。
-
-### 2.3 登出
-
-```
-POST /auth/logout
-```
-
-**Headers**: `Authorization: Bearer <token>`
-
-**Request Body**:
-
-```json
-{
-  "userId": 1234567890123456789,
-  "tokenId": "session-uuid"
-}
-```
-
-**Response**: `{"code":0,"message":"success","data":null}`
-
-### 2.4 Token 校验
-
-```
-GET /auth/validate
-```
-
-**Headers**: `Authorization: Bearer <token>`
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "valid": true,
-    "userId": 1234567890123456789,
-    "deviceId": "device-uuid",
-    "expiresAt": 1707123400000
-  }
-}
-```
-
----
-
-## 3. User 用户
-
-### 3.1 获取当前用户资料
-
-```
-GET /users/me
-```
-
-**Headers**: `Authorization: Bearer <token>`
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": 1234567890123456789,
-    "username": "zhangsan",
-    "phone": "138****8000",
-    "email": "zhan****@foo.com",
-    "avatar": "https://minio.xx.com/aim/avatar/abc.jpg",
-    "gender": 1,
-    "bio": "Hello IM!",
-    "birthday": 946656000000,
-    "createdAt": 1707100000000,
-    "updatedAt": 1707100000000,
-    "balance": 0
-  }
-}
-```
-
-### 3.2 更新用户资料
-
-```
-PUT /users/me
-```
-
-**Headers**: `Authorization: Bearer <token>`
-
-**Request Body**（所有字段可选，传什么更新什么）：
-
-```json
-{
-  "avatar": "https://new-avatar.jpg",
-  "gender": 1,
-  "bio": "新签名",
-  "birthday": 946656000000
-}
-```
-
-**Response**：返回更新后的完整 `UserInfo`（同 3.1）。
-
-### 3.3 修改密码
-
-```
-PUT /users/me/password
-```
-
-```json
-{
-  "oldPassword": "Abc@123456",
-  "newPassword": "Xyz@654321"
-}
-```
-
-### 3.4 获取指定用户信息
-
-```
-GET /users/{userId}
-```
-
-**Response**: `data` 为单个 `UserInfo` 对象（同 3.1）。
-
-### 3.5 批量获取用户信息
-
-```
-POST /users/batch
-```
-
-**Request Body**:
-
-```json
-{
-  "userIds": [123456, 789012, 345678]
-}
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "users": [ { ...UserInfo }, { ...UserInfo }, { ...UserInfo } ]
-  }
-}
-```
-
-### 3.6 搜索用户
-
-```
-POST /users/search
-```
-
-```json
-{
-  "keyword": "zhang",
-  "pageNum": 1,
-  "pageSize": 20
-}
-```
-
-**Response**: 分页格式，`list` 中每项为 `UserInfo`。
-
-### 3.7 批量查询在线状态
-
-```
-POST /users/batch-status
-```
-
-```json
-{
-  "userIds": [123456, 789012]
-}
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "status": {
-      "123456": true,
-      "789012": false
-    }
-  }
-}
-```
-
----
-
-## 4. Friend 好友
-
-### 4.1 发送好友申请
-
-```
-POST /friends/requests
-```
-
-```json
-{
-  "fromUserId": 123456,
-  "toUserId": 789012,
-  "message": "我是张三"   // 验证消息
-}
-```
-
-**Response**: `{"requestId": 987654321}`
-
-### 4.2 接受好友申请
-
-```
-POST /friends/requests/{requestId}/accept
-```
-
-```json
-{
-  "requestId": 987654321,
-  "userId": 789012
-}
-```
-
-### 4.3 拒绝好友申请
-
-```
-POST /friends/requests/{requestId}/reject
-```
-
-```json
-{
-  "requestId": 987654321,
-  "userId": 789012
-}
-```
-
-### 4.4 取消发出的申请
-
-```
-DELETE /friends/requests/{requestId}
-```
-
-```json
-{
-  "requestId": 987654321,
-  "userId": 123456
-}
-```
-
-### 4.5 待处理申请列表（发给我的）
-
-```
-GET /friends/requests/pending?pageNum=1&pageSize=20
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [
-      {
-        "requestId": 9876,
-        "fromUserId": 123456,
-        "fromUsername": "zhangsan",
-        "fromAvatar": "https://...",
-        "toUserId": 789012,
-        "message": "我是张三",
-        "status": 1,                   // 1=待处理
-        "createdAt": 1707100000000,
-        "updatedAt": 1707100000000
-      }
-    ],
-    "total": 1,
-    "pageNum": 1,
-    "pageSize": 20
-  }
-}
-```
-
-### 4.6 我发出的申请列表
-
-```
-GET /friends/requests/sent?pageNum=1&pageSize=20
-```
-
-Response 结构同 4.5。
-
-### 4.7 好友列表
-
-```
-GET /friends?pageNum=1&pageSize=50&groupId=0
-```
-
-`groupId` 可选，指定分组 ID 则只查该分组好友，不传/传 0 查全部。
-
-**Response**:
-
-```json
-{
-  "list": [
-    {
-      "userId": 789012,
-      "username": "lisi",
-      "avatar": "https://...",
-      "remark": "李四",              // 备注名
-      "groupId": 0,
-      "groupName": "默认分组",
-      "status": "online",            // online / offline
-      "createdAt": 1707100000000
-    }
-  ],
-  "total": 1,
-  "pageNum": 1,
-  "pageSize": 50
-}
-```
-
-### 4.8 删除好友
-
-```
-DELETE /friends/{friendUserId}
-```
-
-```json
-{
-  "userId": 123456,
-  "friendId": 789012
-}
-```
-
-### 4.9 设置好友备注
-
-```
-PUT /friends/{friendUserId}/remark
-```
-
-```json
-{
-  "userId": 123456,
-  "friendId": 789012,
-  "remark": "李四"
-}
-```
-
-### 4.10 移动好友到分组
-
-```
-PUT /friends/{friendUserId}/group
-```
-
-```json
-{
-  "userId": 123456,
-  "friendId": 789012,
-  "groupId": 5
-}
-```
-
-### 4.11 创建好友分组
-
-```
-POST /friends/groups
-```
-
-```json
-{
-  "userId": 123456,
-  "name": "同事"
-}
-```
-
-**Response**: `{"groupId": 10001}`
-
-### 4.12 重命名分组
-
-```
-PUT /friends/groups/{groupId}
-```
-
-```json
-{
-  "groupId": 10001,
-  "userId": 123456,
-  "name": "前同事"
-}
-```
-
-### 4.13 删除分组
-
-```
-DELETE /friends/groups/{groupId}
-```
-
-```json
-{
-  "groupId": 10001,
-  "userId": 123456
-}
-```
-
-### 4.14 分组列表
-
-```
-GET /friends/groups
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "groups": [
-      {
-        "id": 1,
-        "name": "默认分组",
-        "sortOrder": 0,
-        "friendCount": 15,
-        "createdAt": 1707100000000
-      },
-      {
-        "id": 10001,
-        "name": "同事",
-        "sortOrder": 1,
-        "friendCount": 8,
-        "createdAt": 1707100000000
-      }
-    ]
-  }
-}
-```
-
-### 4.15 拉黑用户
-
-```
-POST /friends/{userId}/block
-```
-
-```json
-{
-  "userId": 123456,
-  "blockedUserId": 789012
-}
-```
-
-### 4.16 解除拉黑
-
-```
-DELETE /friends/{userId}/block
-```
-
-```json
-{
-  "userId": 123456,
-  "blockedUserId": 789012
-}
-```
-
-### 4.17 黑名单列表
-
-```
-GET /friends/blacklist?pageNum=1&pageSize=50
-```
-
-**Response**:
-
-```json
-{
-  "list": [
-    {
-      "userId": 789012,
-      "username": "lisi",
-      "avatar": "https://...",
-      "blockedAt": 1707100000000
-    }
-  ],
-  "total": 1,
-  "pageNum": 1,
-  "pageSize": 50
-}
-```
-
----
-
-## 5. Conversation 会话
-
-### 5.1 创建会话
-
-```
-POST /convs
-```
-
-**单聊**:
-
-```json
-{
-  "type": 1,                    // 1=单聊 2=群聊
-  "creatorId": 123456,
-  "peerUserId": 789012          // 单聊时指定对方用户ID
-}
-```
-
-**群聊**:
-
-```json
-{
-  "type": 2,
-  "creatorId": 123456,
-  "name": "技术讨论组",         // 群名称
-  "avatar": "",                 // 可选，群头像URL
-  "memberIds": [789012, 345678] // 初始成员列表
-}
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "conversationId": 5550000000000001,
-    "conversation": {
-      "id": 5550000000000001,
-      "type": 2,
-      "name": "技术讨论组",
-      "avatar": "",
-      "ownerId": 123456,
-      "memberCount": 3,
-      "maxSeq": 0,
-      "lastMessageId": 0,
-      "lastMessagePreview": "",
-      "announcement": "",
-      "isMutedAll": false,
-      "createdAt": 1707100000000,
-      "updatedAt": 1707100000000
-    }
-  }
-}
-```
-
-### 5.2 获取会话详情
-
-```
-GET /convs/{conversationId}
-```
-
-**Response**: `data` 为 `Conversation` 对象。
-
-### 5.3 会话列表
-
-```
-GET /convs?cursor=&limit=20&type=0&pinnedFirst=true
-```
-
-| 参数 | 说明 |
-|---|---|
-| `cursor` | 游标（首次传空），取上一页最后一条会话的 `maxSeq` |
-| `limit` | 每页数量，默认 20 |
-| `type` | 0=全部, 1=单聊, 2=群聊 |
-| `pinnedFirst` | 是否置顶优先 |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [
-      {
-        "id": 5550000000000001,
-        "type": 2,
-        "name": "技术讨论组",
-        "avatar": "",
-        "ownerId": 123456,
-        "memberCount": 3,
-        "maxSeq": 10,
-        "lastMessageId": 8880001,
-        "lastMessagePreview": "[图片]",
-        "lastReadSeq": 8,
-        "unreadCount": 2,
-        "isMuted": false,
-        "isPinned": false,
-        "isMutedAll": false,
-        "announcement": "",
-        "background": "",
-        "createdAt": 1707100000000,
-        "updatedAt": 1707100000001
-      }
-    ],
-    "nextCursor": "10",
-    "hasMore": false,
-    "total": 1
-  }
-}
-```
-
-### 5.4 更新会话信息
-
-```
-PUT /convs/{conversationId}/info
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "userId": 123456,
-  "name": "新群名",          // 可选
-  "avatar": "https://...",   // 可选
-  "background": ""           // 可选，聊天背景
-}
-```
-
-### 5.5 解散/退出会话
-
-```
-DELETE /convs/{conversationId}
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "userId": 123456
-}
-```
-
-### 5.6 成员列表
-
-```
-GET /convs/{conversationId}/members?pageNum=1&pageSize=50
-```
-
-**Response**:
-
-```json
-{
-  "list": [
-    {
-      "userId": 123456,
-      "username": "zhangsan",
-      "avatar": "https://...",
-      "role": 1,           // 0=Member, 1=Owner, 2=Admin
-      "alias": "",
-      "joinedAt": 1707100000000,
-      "lastReadSeq": 10,
-      "isMuted": false,
-      "muteUntil": 0,
-      "memberType": 1      // 1=user, 2=bot(Phase 2)
-    },
-    {
-      "userId": 789012,
-      "username": "lisi",
-      "avatar": "https://...",
-      "role": 0,
-      "alias": "",
-      "joinedAt": 1707100000000,
-      "lastReadSeq": 8,
-      "isMuted": false,
-      "muteUntil": 0,
-      "memberType": 1
-    }
-  ],
-  "total": 2,
-  "pageNum": 1,
-  "pageSize": 50
-}
-```
-
-### 5.7 邀请成员
-
-```
-POST /convs/{conversationId}/members/invite
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "userIds": [333333, 444444]
-}
-```
-
-**Response**: `{"addedUserIds": [333333, 444444], "failedUserIds": []}`
-
-### 5.8 移除成员
-
-```
-POST /convs/{conversationId}/members/kick
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "userIds": [789012]
-}
-```
-
-### 5.9 设置成员角色
-
-```
-PUT /convs/{conversationId}/members/{userId}/role
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "userId": 789012,
-  "role": 2             // 0=Member, 1=Owner, 2=Admin
-}
-```
-
-### 5.10 禁言成员
-
-```
-PUT /convs/{conversationId}/members/{userId}/mute
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "userId": 789012,
-  "durationSeconds": 3600   // 0=永久
-}
-```
-
-### 5.11 解除禁言
-
-```
-DELETE /convs/{conversationId}/members/{userId}/mute
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "userId": 789012
-}
-```
-
-### 5.12 全员禁言
-
-```
-POST /convs/{conversationId}/mute-all
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456
-}
-```
-
-### 5.13 取消全员禁言
-
-```
-DELETE /convs/{conversationId}/mute-all
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456
-}
-```
-
-### 5.14 设置群公告
-
-```
-PUT /convs/{conversationId}/announcement
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "content": "本周五团建"
-}
-```
-
-### 5.15 删除群公告
-
-```
-DELETE /convs/{conversationId}/announcement
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456
-}
-```
-
-### 5.16 转让群主
-
-```
-POST /convs/{conversationId}/transfer
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "operatorId": 123456,
-  "newOwnerId": 789012
-}
-```
-
-### 5.17 获取会话设置
-
-```
-GET /convs/{conversationId}/settings
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "isMuted": false,
-    "isPinned": false
-  }
-}
-```
-
-### 5.18 更新会话设置
-
-```
-PUT /convs/{conversationId}/settings
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "userId": 123456,
-  "isMuted": true,     // 可选，免打扰
-  "isPinned": true     // 可选，置顶
-}
-```
-
-### 5.19 标记已读
-
-```
-PUT /convs/{conversationId}/read
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "userId": 123456,
-  "seq": 10           // 已读到第几条消息的 seq
-}
-```
-
-### 5.20 消息已读状态
-
-```
-GET /convs/{conversationId}/read-status/{messageId}
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "readCount": 2,
-    "totalCount": 5,
-    "readUsers": [
-      { "userId": 123456, "readAt": 1707100001000, "lastReadSeq": 10 },
-      { "userId": 789012, "readAt": 1707100002000, "lastReadSeq": 9 }
-    ]
-  }
-}
-```
-
----
-
-## 6. Message 消息
-
-### 6.1 消息类型定义
-
-| type | 含义 | content 结构 |
+| `ping` | `{}` | 心跳 |
+| `subscribe_presence` | `{userIds}` | 订阅在线状态 |
+| `unsubscribe_presence` | `{userIds}` | 取消订阅 |
+| `typing` | `{convId, userId}` | 正在输入 |
+| `typing_stop` | `{convId, userId}` | 停止输入 |
+| `ack` | `{messageId, convId, seq}` | 消息送达确认 |
+
+### 9.2 下行（服务端 → 客户端）
+
+| 事件 | data | 说明 |
 |---|---|---|
-| 1 | 文本 | `{ "text": "hello", "mentionUserIds": [], "mentionAll": false }` |
-| 2 | 图片 | `{ "fileId": 123, "url": "...", "thumbnailUrl": "...", "width": 800, "height": 600, "size": 102400, "format": "jpeg" }` |
-| 3 | 文件 | `{ "fileId": 123, "url": "...", "name": "doc.pdf", "size": 204800, "ext": "pdf", "mimeType": "application/pdf" }` |
-| 4 | 视频 | `{ "fileId": 123, "url": "...", "thumbnailUrl": "...", "duration": 30, "width": 1920, "height": 1080, "size": 5242880 }` |
-| 5 | 语音 | `{ "fileId": 123, "url": "...", "duration": 15, "size": 81920 }` |
-| 6 | 位置 | `{ "latitude": 39.9042, "longitude": 116.4074, "address": "北京市...", "name": "天安门" }` |
-| 7 | 系统 | `{ "action": "member.joined", "detail": "张三邀请李四加入群聊", "relatedUserIds": [333], "actorId": 123, "actorType": "user", "payload": "{}" }` |
+| `pong` | `{}` | 心跳回应 |
+| `message.new` | `messageId, convId, seq, fromUserId, msgType, status, content, replyToId, replyToPreview, createdAt, unreadCount, senderInfo{id, username, avatar}` | 新消息 |
+| `message.recalled` | `{messageId, convId, userId}` | 消息撤回 |
+| `message.edited` | `{messageId, convId, userId, newContent}` | 消息编辑 |
+| `presence` | `{userId, status:'online'\|'offline'}` | 在线状态（Phase B） |
+| `read_sync` | `{convId, userId, lastReadSeq}` | 已读同步（Phase B） |
+| `typing.notify` | `{convId, userId}` | **正在输入通知**（下行专用，与上行 `typing` 区分） |
+| `typing.stop` | `{convId, userId}` | 停止输入通知 |
+| `unread_count` | `{convId, count}` | 未读数变化 |
+| `read_receipt` | `{messageId, userId, readAt}` | 已读回执（Phase B） |
+| `conversation.updated` | `{convId}` | 会话变更（前端扩展） |
+| `notification.new` | `NotificationDTO` | 新通知（前端扩展） |
 
-### 6.2 发送消息
-
-```
-POST /messages/send
-```
-
-**Request Body**:
-
-```json
-{
-  "conversationId": 5550001,
-  "fromUserId": 123456,
-  "msgType": 1,
-  "content": {
-    "text": "Hello everyone!",
-    "mentionUserIds": [789012],
-    "mentionAll": false
-  },
-  "replyToId": 0,
-  "clientMsgId": "client-uuid-20240711-001"
-}
-```
-
-| 字段 | 说明 |
-|---|---|
-| `msgType` | 消息类型，见 6.1 |
-| `content` | 消息内容，结构因 msgType 而异 |
-| `replyToId` | 可选，引用的消息 ID |
-| `clientMsgId` | **必填**，客户端幂等 key（同一消息重复发送返回 40004） |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "messageId": 8880001,
-    "seq": 11,
-    "createdAt": 1707100000000
-  }
-}
-```
-
-### 6.3 撤回消息
-
-```
-POST /messages/{messageId}/recall
-```
-
-```json
-{
-  "messageId": 8880001,
-  "conversationId": 5550001,
-  "userId": 123456
-}
-```
-
-> 限发送后 120 秒内可撤回，超时返回 40002。
-
-### 6.4 编辑消息
-
-```
-PUT /messages/{messageId}
-```
-
-```json
-{
-  "messageId": 8880001,
-  "conversationId": 5550001,
-  "userId": 123456,
-  "newContent": {
-    "text": "Hello everyone! (已修改)"
-  }
-}
-```
-
-> 限发送后 120 秒内可编辑，超时返回 40003。
-
-### 6.5 删除消息
-
-```
-DELETE /messages/{messageId}
-```
-
-```json
-{
-  "messageId": 8880001,
-  "conversationId": 5550001,
-  "userId": 123456,
-  "deleteForAll": false
-}
-```
-
-### 6.6 获取消息列表（游标分页）
-
-```
-GET /messages/{conversationId}?cursor=50&limit=20&beforeTime=0&afterTime=0
-```
-
-| 参数 | 说明 |
-|---|---|
-| `cursor` | 游标（上页最后一条的 seq），首次传 `0` |
-| `limit` | 每页数量，默认 20，最大 50 |
-| `beforeTime` | 可选，只拉该时间之前的消息 |
-| `afterTime` | 可选，只拉该时间之后的消息 |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [
-      {
-        "messageId": 8880002,
-        "conversationId": 5550001,
-        "seq": 11,
-        "fromUserId": 123456,
-        "msgType": 1,
-        "status": 1,
-        "content": { "text": "hello", "mentionUserIds": [], "mentionAll": false },
-        "replyToId": 0,
-        "replyToPreview": "",
-        "editCount": 0,
-        "editedAt": 0,
-        "createdAt": 1707100000002
-      },
-      {
-        "messageId": 8880001,
-        "conversationId": 5550001,
-        "seq": 10,
-        "fromUserId": 789012,
-        "msgType": 2,
-        "status": 1,
-        "content": { "fileId": 123, "url": "https://...", "thumbnailUrl": "https://...", "width": 800, "height": 600, "size": 102400, "format": "jpeg" },
-        "replyToId": 0,
-        "replyToPreview": "",
-        "editCount": 0,
-        "editedAt": 0,
-        "createdAt": 1707100000001
-      }
-    ],
-    "nextCursor": "9",
-    "hasMore": true,
-    "total": 100
-  }
-}
-```
-
-> 消息按 `seq` 降序排列（最新在上），`cursor` 传本页最后一条的 `seq` 获取更早的消息。
-
-### 6.7 增量同步消息
-
-```
-GET /messages/{conversationId}/sync?fromSeq=10&limit=50
-```
-
-| 参数 | 说明 |
-|---|---|
-| `fromSeq` | 客户端本地最后的 seq，拉取 `seq > fromSeq` 的消息 |
-| `limit` | 默认 50，最大 200 |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [ ... ],
-    "hasMore": false,
-    "maxSeq": 15
-  }
-}
-```
-
-> `syncMessages` 是消息不丢的兜底机制——客户端断线重连后调用此接口拉取遗漏的消息。
-
-### 6.8 获取单条消息
-
-```
-GET /messages/{messageId}
-```
-
-**Response**: `data` 为单个 `Message` 对象。
-
-### 6.9 批量获取消息
-
-```
-POST /messages/batch
-```
-
-```json
-{ "messageIds": [8880001, 8880002, 8880003] }
-```
-
-### 6.10 搜索消息
-
-```
-GET /messages/search?keyword=hello&conversationId=0&pageNum=1&pageSize=20
-```
-
-| 参数 | 说明 |
-|---|---|
-| `keyword` | 搜索关键词 |
-| `conversationId` | 可选，限定会话 |
-| `startTime` | 可选，起始时间（epoch ms） |
-| `endTime` | 可选，结束时间（epoch ms） |
-| `senderId` | 可选，发送者 |
-
-**Response**: 分页格式，list 中每项为 `Message` 对象。
-
-### 6.11 引用回复
-
-```
-POST /messages/{messageId}/reply
-```
-
-```json
-{
-  "conversationId": 5550001,
-  "fromUserId": 123456,
-  "msgType": 1,
-  "content": { "text": "收到~" },
-  "replyToId": 8880001,
-  "clientMsgId": "client-uuid-20240711-002"
-}
-```
-
-> 本质就是 `sendMessage` 带 `replyToId`，网关层统一封装。
+> ⚠️ 与初始规划差异（按后端定稿）：下行输入中事件为 **`typing.notify`**（非 `typing`），避免与上行同名混淆。
 
 ---
 
-## 7. File 文件
+## 10. 错误码全表
 
-### 7.1 获取上传 URL
-
-```
-POST /files/upload-url
-```
-
-```json
-{
-  "name": "photo.jpg",
-  "mimeType": "image/jpeg",
-  "size": 102400,
-  "uploaderId": 123456,
-  "purpose": 1,
-  "access": 2,
-  "expiresIn": 3600
-}
-```
-
-| 字段 | 说明 |
-|---|---|
-| `purpose` | 1=消息附件, 2=头像 |
-| `access` | 1=私有, 2=会话内可见, 3=公开 |
-| `expiresIn` | 上传 URL 有效期（秒），默认 3600 |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "fileId": 6660001,
-    "uploadUrl": "https://minio.xx.com/aim/abc.jpg?X-Amz-...",
-    "key": "aim/2024/02/abc.jpg",
-    "expiresAt": 1707103600000
-  }
-}
-```
-
-**上传流程**：
-
-1. 调本接口获取 `uploadUrl`
-2. 客户端直接 `PUT` 文件到 `uploadUrl`（二进制，Content-Type 设为原始 mimeType）
-3. 上传完成后调 `confirmUpload` 通知服务端
-
-### 7.2 确认上传
-
-```
-POST /files/confirm
-```
-
-```json
-{
-  "fileId": 6660001,
-  "uploaderId": 123456,
-  "md5": "d41d8cd98f00b204e9800998ecf8427e"   // 可选
-}
-```
-
-**Response**: `data` 返回完整 `FileInfo`。
-
-### 7.3 获取下载 URL
-
-```
-GET /files/{fileId}/download?userId=123456&expiresIn=3600
-```
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "downloadUrl": "https://minio.xx.com/aim/abc.jpg?X-Amz-...",
-    "expiresAt": 1707107200000,
-    "file": {
-      "fileId": 6660001,
-      "name": "photo.jpg",
-      "key": "aim/2024/02/abc.jpg",
-      "size": 102400,
-      "mimeType": "image/jpeg",
-      "ext": "jpg",
-      "width": 800,
-      "height": 600,
-      "duration": 0,
-      "md5": "",
-      "purpose": 1,
-      "access": 2,
-      "uploaderId": 123456,
-      "bucket": "aim",
-      "createdAt": 1707100000000
-    }
-  }
-}
-```
-
-### 7.4 获取文件信息
-
-```
-GET /files/{fileId}/info?userId=123456
-```
-
-### 7.5 删除文件
-
-```
-DELETE /files/{fileId}
-```
-
-```json
-{
-  "fileId": 6660001,
-  "userId": 123456
-}
-```
-
----
-
-## 8. Notification 通知
-
-### 8.1 通知列表
-
-```
-GET /notifications?pageNum=1&pageSize=20&type=0&isRead=false
-```
-
-| 参数 | 说明 |
-|---|---|
-| `type` | 可选，1=系统, 2=审核, 3=Bot |
-| `isRead` | 可选，筛选已读/未读 |
-
-**Response**:
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "list": [
-      {
-        "id": 7770001,
-        "userId": 123456,
-        "type": 1,
-        "title": "新好友申请",
-        "content": "张三申请添加你为好友",
-        "isRead": false,
-        "referenceId": "987654321",
-        "createdAt": 1707100000000
-      }
-    ],
-    "total": 1,
-    "pageNum": 1,
-    "pageSize": 20
-  }
-}
-```
-
-### 8.2 未读通知数
-
-```
-GET /notifications/unread-count
-```
-
-**Response**: `{"code":0,"message":"success","data":{"count":5}}`
-
-### 8.3 标记已读
-
-```
-POST /notifications/{notificationId}/read
-```
-
-```json
-{
-  "notificationId": 7770001,
-  "userId": 123456
-}
-```
-
-### 8.4 全部已读
-
-```
-POST /notifications/read-all
-```
-
-```json
-{ "userId": 123456 }
-```
-
-### 8.5 删除通知
-
-```
-DELETE /notifications/{notificationId}
-```
-
----
-
-## 9. 错误码参考
-
-### 通用错误
-
-| code | message |
-|---|---|
-| 0 | 成功 |
-| 400 | 请求参数错误 |
-| 401 | 未认证（Token 无效或过期） |
-| 403 | 无权限 |
-| 404 | 资源不存在 |
-| 500 | 服务器内部错误 |
-
-### user-service (10xxx)
-
-| code | message |
-|---|---|
-| 10001 | 用户不存在 |
-| 10002 | 用户名已存在 |
-| 10003 | 手机号已被注册 |
-| 10004 | 密码错误 |
-| 10005 | Token 无效或已过期 |
-| 10006 | Token 已过期 |
-| 10007 | 会话不存在 |
-| 10008 | 用户被禁用 |
-
-### friend-service (20xxx)
-
-| code | message |
-|---|---|
-| 20001 | 已经是好友 |
-| 20002 | 非好友关系 |
-| 20003 | 好友申请已存在 |
-| 20004 | 好友申请不存在 |
-| 20005 | 申请已处理 |
-| 20006 | 已被对方拉黑 |
-| 20007 | 已拉黑该用户 |
-| 20008 | 未拉黑该用户 |
-
-### conv-service (30xxx)
-
-| code | message |
-|---|---|
-| 30001 | 会话不存在 |
-| 30002 | 用户已是会话成员 |
-| 30003 | 用户不在会话中 |
-| 30004 | 非会话成员 |
-| 30005 | 权限不足 |
-| 30006 | 已被禁言 |
-| 30007 | 全员禁言中 |
-| 30008 | 成员数超上限 (500) |
-| 30009 | 不能转让给自己 |
-
-### message-service (40xxx)
-
-| code | message |
-|---|---|
-| 40001 | 消息不存在 |
-| 40002 | 撤回超时 (120s) |
-| 40003 | 编辑超时 (120s) |
-| 40004 | 重复消息 |
-| 40005 | 非消息发送者 |
-| 40006 | 消息已撤回 |
-| 40007 | 序号生成失败 |
-
-### file-service (50xxx)
-
-| code | message |
-|---|---|
-| 50001 | 文件不存在 |
-| 50002 | 文件上传失败 |
-| 50003 | 文件过大 (100MB) |
-| 50004 | 不支持的文件类型 |
-
-### signaling-service (60xxx)
-
-| code | message |
-|---|---|
-| 60001 | 通知不存在 |
-
----
-
-## 10. WebSocket 实时通信
-
-### 10.1 连接
-
-```
-ws://{host}:8081/ws?token=<access_token>&device_id=<deviceId>
-```
-
-握手时校验 JWT Token，失败则拒绝连接。
-
-### 10.2 消息帧格式
-
-所有帧为 JSON 文本帧，固定结构：
-
-```json
-{
-  "event": "message.new",
-  "data": { ... },
-  "timestamp": 1707100000000
-}
-```
-
-### 10.3 客户端 → 服务端（上行）
-
-| event | 说明 | data |
+| code | 含义 | 产生场景 |
 |---|---|---|
-| `ping` | 心跳，每 30 秒发一次 | `{}` |
-| `subscribe_presence` | 订阅指定用户在线状态 | `{ "userIds": [789012] }` |
-| `unsubscribe_presence` | 取消订阅 | `{ "userIds": [789012] }` |
-| `typing` | 正在输入 | `{ "convId": 5550001, "userId": 123456 }` |
-| `typing_stop` | 停止输入 | `{ "convId": 5550001, "userId": 123456 }` |
-| `ack` | 消息已读回执（客户端确认收到） | `{ "messageId": 8880001, "convId": 5550001, "seq": 11 }` |
+| 0 | 成功 | 所有成功响应 |
+| 400 | 请求参数错误 | 校验失败/批量超 500/群名公告超长/文件参数非法等 |
+| 401 | 未认证 | 网关鉴权失败（HTTP 401）；X-User-Id 缺失（user-service） |
+| 500 | 服务器内部错误 | 未知异常兜底 |
+| 10001 | 用户不存在 | 资料查询/改密/更新资料目标不存在 |
+| 10002 | 用户名已存在 | 注册 |
+| 10003 | 手机号已被注册 | 注册/更新资料 |
+| 10004 | 密码错误 | **登录（用户不存在与密码错误统一，防枚举）**/改密旧密码错误 |
+| 10005 | Token 无效或已过期 | refresh 失败（验签/过期/type/吊销/改密前签发） |
+| 10006 | Token 已过期 | 预留（未产生） |
+| 10007 | 会话不存在 | 预留（未产生） |
+| 10008 | **登录失败次数过多** | 登录连续失败 5 次锁定 15 分钟 |
+| 10009 | 邮箱已被注册 | 注册/更新资料 |
+| 20001 | 你们已经是好友了 | friend |
+| 20002 | 好友申请不存在或已处理 | friend |
+| 20003 | 对方不是你的好友 | friend |
+| 20004 | 不能添加自己为好友 | friend |
+| 20005 | 好友分组不存在 | friend |
+| 20006 | 对方已被你拉黑 | friend |
+| 20007 | 你已被对方拉黑 | friend |
+| 30001 | 会话不存在 | conv（优先于 30004） |
+| 30002 | 用户已是会话成员 | 预留（invite 已存在者归入 alreadyMemberIds） |
+| 30003 | 用户不在会话中 | kick/mute/transfer 目标不在会话 |
+| 30004 | 非会话成员 | conv 操作者身份校验 |
+| 30005 | 权限不足 | 非管理操作/对同级上级操作 |
+| 30006 | 已被禁言 | message 发送拦截（待实现） |
+| 30007 | 全员禁言中 | message 发送拦截（待实现） |
+| 30008 | 成员数量已达上限（500） | 群聊创建/invite |
+| 30009 | 不能转让给自己 | transfer |
+| 40001 | 消息不存在 | message |
+| 40002 | 已超过可撤回时间（120s） | message |
+| 40003 | 已超过可编辑时间（120s） | message |
+| 40004 | 请勿重复发送 | message（clientMsgId 幂等） |
+| 40005 | 没有操作该消息的权限 | message |
+| 50001 | 文件不存在 | file |
+| 50002 | 文件上传失败 | upload-url/confirm |
+| 50003 | 文件过大 | 按 purpose 限制（头像 5MB/其他 100MB） |
+| 50004 | 不支持的文件类型 | MIME 白名单外/SVG |
+| 50005 | 文件尚未上传确认 | download/info 遇 PENDING |
+| 50006 | 文件已删除 | download/info/delete 遇 DELETED |
+| 50007 | 无权操作他人文件 | confirm/delete 归属校验 |
+| 60001 | 通知不存在 | notification |
 
-### 10.4 服务端 → 客户端（下行）
-
-| event | 说明 | data 结构 |
-|---|---|---|
-| `pong` | 心跳回复 | `{}` |
-| `message.new` | 新消息 | 见下方 |
-| `message.recalled` | 消息被撤回 | `{ "messageId": 8880001, "convId": 5550001, "userId": 123456 }` |
-| `message.edited` | 消息被编辑 | `{ "messageId": 8880001, "convId": 5550001, "userId": 123456, "newContent": {...} }` |
-| `presence` | 在线状态变更 | `{ "userId": 789012, "status": "online" }` |
-| `read_sync` | 已读状态同步 | `{ "convId": 5550001, "userId": 789012, "lastReadSeq": 11 }` |
-| `typing` | 对方正在输入 | `{ "convId": 5550001, "userId": 789012 }` |
-| `typing.stop` | 对方停止输入 | `{ "convId": 5550001, "userId": 789012 }` |
-| `unread_count` | 未读计数更新 | `{ "convId": 5550001, "count": 3 }` |
-| `read_receipt` | 已读回执 | `{ "messageId": 8880001, "userId": 789012, "readAt": 1707100001000 }` |
-
-### 10.5 `message.new` 事件 data 结构
-
-```json
-{
-  "messageId": 8880001,
-  "convId": 5550001,
-  "seq": 11,
-  "fromUserId": 123456,
-  "msgType": 1,
-  "status": 1,
-  "content": {
-    "text": "Hello!",
-    "mentionUserIds": [],
-    "mentionAll": false
-  },
-  "replyToId": 0,
-  "replyToPreview": "",
-  "createdAt": 1707100000000,
-  "unreadCount": 3,
-  "senderInfo": {
-    "id": 123456,
-    "username": "zhangsan",
-    "avatar": "https://..."
-  }
-}
-```
-
-> `unreadCount` 是当前用户在该会话的未读消息数，由 signaling-service 扇出时按人计算。
-
-### 10.6 在线状态管理
-
-- 客户端 WebSocket 连接成功后自动标记为 `online`
-- 客户端断开连接（心跳超时 90 秒无 ping）自动标记为 `offline`
-- 客户端可通过 `subscribe_presence` 订阅关注用户的在线状态变化
-- 在线状态变更通过 `presence` 事件推送
+**前端文案优先级**：映射表（`errorCodes.ts`）> 服务端 message > 默认"操作失败（code）"
+**会话失效码**：401 / 10005 / 10006 → 触发静默刷新流程
 
 ---
 
-## 附录 A：实体字段速查
+## 11. 契约决策记录（本次基线修正）
 
-### UserInfo
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | long | 用户 ID |
-| username | string | 用户名 |
-| phone | string | 手机号（脱敏） |
-| email | string | 邮箱（脱敏） |
-| avatar | string | 头像 URL |
-| gender | int | 0=未设置 1=男 2=女 |
-| bio | string | 个人简介 |
-| birthday | long | 生日（epoch ms） |
-| createdAt | long | 注册时间（epoch ms） |
-| updatedAt | long | 更新时间（epoch ms） |
-| balance | double | 余额 |
-
-### Message 常用 content 结构
-
-**文本 (msgType=1)**:
-```json
-{ "text": "内容", "mentionUserIds": [123], "mentionAll": false }
-```
-
-**图片 (msgType=2)**:
-```json
-{ "fileId": 123, "url": "", "thumbnailUrl": "", "width": 800, "height": 600, "size": 102400, "format": "jpeg" }
-```
-
-**文件 (msgType=3)**:
-```json
-{ "fileId": 123, "url": "", "name": "文档.pdf", "size": 204800, "ext": "pdf", "mimeType": "application/pdf" }
-```
-
-**语音 (msgType=5)**:
-```json
-{ "fileId": 123, "url": "", "duration": 15, "size": 81920 }
-```
-
-**视频 (msgType=4)**:
-```json
-{ "fileId": 123, "url": "", "thumbnailUrl": "", "duration": 30, "width": 1920, "height": 1080, "size": 5242880 }
-```
-
-**位置 (msgType=6)**:
-```json
-{ "latitude": 39.9042, "longitude": 116.4074, "address": "详细地址", "name": "地点名称" }
-```
-
-**系统消息 (msgType=7)**:
-```json
-{ "action": "member.joined", "detail": "张三邀请李四加入群聊", "relatedUserIds": [333], "actorId": 123, "actorType": "user", "payload": "{}" }
-```
+| # | 冲突点 | 决策 | 依据 |
+|---|--------|------|------|
+| 1 | refresh 响应结构 | 后端版：4 字段 + 轮换 | 安全最佳实践（旧 refreshToken 泄露可复用 30 天） |
+| 2 | 登录错误码 | 后端版：10001 与 10004 统一 | 防账户枚举 |
+| 3 | search 匹配范围 | 后端版：仅 username | 隐私与实现一致 |
+| 4 | 他人资料 | 后端版：脱敏 + balance=0 | 隐私修复 |
+| 5 | settings 键名 | 后端版：`muted`/`pinned` | JSON 规范（无 is- 前缀） |
+| 6 | WS 下行 typing | 后端版：`typing.notify` | 避免与上行 `typing` 同名 |
+| 7 | 拉黑路径 | 前端版：`/friends/blacklist/{userId}` | 前端已实现且语义清晰 |
+| 8 | friend 字段 | 前端版：`groupId`/`createdAt`/`list` | 前端 mock 自洽 |
+| 9 | friend/message/notification 全契约 | 前端版 | 前端领先、后端未实现，成本最低 |
+| 10 | 错误码 10008 文案 | 统一为"登录失败次数过多" | 与实现语义一致 |
+| 11 | role 枚举 | 后端版：1=OWNER 2=ADMIN 3=MEMBER | 后端已实现 |
+| 12 | 群名/公告上限 | 后端版：32/500 | 后端已实现 |
 
 ---
 
-## 附录 B：Phase 2 预留（本版不实现）
+## 附录 A：历史说明
 
-以下路由在 v1 中暂不提供，Phase 2 扩展：
+- 2026-07-11 的初始规划版（draft，端口 8080、logout body、validate 含 deviceId、friend 路径、message 游标分页等已过时内容）已删除，不再保留
+- 本文件（2026-07-31 契约基线，合并自原 `api-v1-implemented.md`）是唯一契约
+- 后续所有开发（后端实现 / 前端 mock 修改）以本文件为准，变更必须回写本文件
 
-- Bot 管理：`/bots/**`
-- MCP Server：`/mcp-servers/**`
-- Bot 绑定会话：`/convs/{id}/bots/**`
-- AI 会话工具：`/convs/{id}/summarize`、`/convs/{id}/todos/**`、`/messages/{id}/translate`
-- 知识库：`/knowledge/**`、`/wiki/**`
-- LLM 模型：`/models/**`
-- OAuth 登录：`/auth/oauth/**`
-- Token 刷新：`/auth/refresh`
-- OAuth/会话管理/余额：Phase 2 补充
-- 广播消息：`/broadcasts/**`
+## 附录 B：后续开发指引
+
+- **friend-service 实现**：按第 4 章契约（路径/字段/错误码已定稿），错误码 20001-20008 已就绪
+- **message-service 实现**：按第 6 章契约 + common 模块 `event/MessageCreatedEvent` 等事件 DTO；发送拦截用 30006/30007；幂等用 clientMsgId
+- **signaling-service + ws-gateway**：按第 9 章协议（事件名已定稿），下行统一 `typing.notify`；未读 key 前缀 `aim:unread:`（CommonConst.REDIS_KEY_UNREAD）
+- **Notification**：按第 8 章契约
+- **前端适配项**（已按本契约修正）：refresh 4 字段轮换、settings 键名、WS typing.notify、logout 带 Authorization、errorCodes 补 10009/改 10008

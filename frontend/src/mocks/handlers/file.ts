@@ -3,7 +3,7 @@ import { mockBlobStore } from '../blobStore';
 import type { MockHandler } from '../engine/types';
 import { asId, asIdArray, asNumber, asRecord, asString, type HandlerContext } from './context';
 
-/** File 域 handlers（api-v1-implemented.md §5）。 */
+/** File 域 handlers（api-v1.md §5）。 */
 export function createFileRoutes(
   ctx: HandlerContext,
 ): Array<[string, MockHandler, { isPublic?: boolean }?]> {

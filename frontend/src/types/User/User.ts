@@ -14,7 +14,7 @@ export type Tokens = {
 
 export type Gender = 0 | 1 | 2;
 
-/** UserInfo（api-v1-implemented.md 附录 A）。 */
+/** UserInfo（api-v1.md 附录 A）。 */
 export type UserInfo = {
   id: Int64;
   username: string;

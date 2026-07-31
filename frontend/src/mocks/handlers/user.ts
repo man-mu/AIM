@@ -2,7 +2,7 @@ import { err, ok } from '@/lib/result';
 import type { MockHandler } from '../engine/types';
 import { asId, asIdArray, asNumber, asRecord, asString, pageParams, type HandlerContext } from './context';
 
-/** User 域 handlers（api-v1-implemented.md §3）。 */
+/** User 域 handlers（api-v1.md §3）。 */
 export function createUserRoutes(
   ctx: HandlerContext,
 ): Array<[string, MockHandler, { isPublic?: boolean }?]> {

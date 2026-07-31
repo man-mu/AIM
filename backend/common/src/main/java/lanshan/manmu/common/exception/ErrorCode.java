@@ -38,7 +38,7 @@ public enum ErrorCode {
     USER_FORBIDDEN        (10008, "登录失败次数过多，请稍后再试"),
     USER_EMAIL_EXISTS     (10009, "邮箱已被注册"),
 
-    // friend-service 2xxxx（语义按 API/api-v1-implemented.md 第 10 章契约定稿，与前端 errorCodes 对齐）
+    // friend-service 2xxxx（语义按 API/api-v1.md 第 10 章契约定稿，与前端 errorCodes 对齐）
     FRIEND_ALREADY_EXISTS    (20001, "你们已经是好友了"),
     FRIEND_REQUEST_HANDLED   (20002, "好友申请不存在或已处理"),
     NOT_FRIEND               (20003, "对方不是你的好友"),

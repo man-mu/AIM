@@ -4,7 +4,7 @@ import type { MockHandler } from '../engine/types';
 import { asRecord, asString, type HandlerContext } from './context';
 
 /**
- * Auth 域 handlers（api-v1-implemented.md §2）。
+ * Auth 域 handlers（api-v1.md §2）。
  * 注册 / 登录成功即为用户搭建初始世界（幂等）。
  */
 export function createAuthRoutes(
