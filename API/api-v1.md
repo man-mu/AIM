@@ -1,6 +1,13 @@
-# AIM API v1 接口文档
+# AIM API v1 接口文档（历史规划）
 
 > **版本**：v1.0.0-draft（Phase 1 核心 IM，不含 Bot/AI 模块）
+
+> ## ⚠️ 本文档已过时（2026-07-31 起）
+>
+> 本文档为项目初始规划契约（draft 版），部分内容与当前实现不符（端口 8080、接口路径、字段、错误码语义等均已变化）。
+> **当前契约以 [api-v1-implemented.md](./api-v1-implemented.md) 为准（唯一事实来源）**，本文档仅作历史参考。
+>
+
 > **Base URL**：`http://{host}:8080/api/v1`
 > **Content-Type**：`application/json`
 > **字符编码**：UTF-8
