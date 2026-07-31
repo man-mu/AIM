@@ -35,7 +35,8 @@ public class UserController {
 
     @GetMapping("/me")
     public Result<UserInfo> me(@RequestHeader("X-User-Id") long userId) {
-        return Result.ok(userService.getUserInfo(userId));
+        // 本人：返回完整资料
+        return Result.ok(userService.getUserInfo(userId, userId));
     }
 
     @PutMapping("/me")
@@ -54,8 +55,11 @@ public class UserController {
     }
 
     @GetMapping("/{userId}")
-    public Result<UserInfo> getUser(@PathVariable("userId") long userId) {
-        return Result.ok(userService.getUserInfo(userId));
+    public Result<UserInfo> getUser(@PathVariable("userId") long userId,
+                                     @RequestHeader("X-User-Id") long viewerId) {
+        // viewerId 来自网关注入（鉴权后由 JWT 解出），用于脱敏判定：本人返回完整资料，
+        // 他人 phone/email 脱敏、balance 置 0
+        return Result.ok(userService.getUserInfo(userId, viewerId));
     }
 
     @PostMapping("/batch")

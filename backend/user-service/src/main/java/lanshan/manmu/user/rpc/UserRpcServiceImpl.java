@@ -43,12 +43,14 @@ public class UserRpcServiceImpl implements UserRpcService {
     }
 
     @Override
-    public UserInfo getUserInfo(GetUserInfoReq req) {
-        return userService.getUserInfo(req.getUserId());
+    public UserInfo getUserInfo(GetUserInfoReq req, long viewerId) {
+        // 透传调用者 viewerId，由 UserServiceImpl 依据"是否本人"决定脱敏
+        return userService.getUserInfo(req.getUserId(), viewerId);
     }
 
     @Override
     public BatchGetUserInfoResp batchGetUserInfo(BatchGetUserInfoReq req) {
+        // 默认全量脱敏：调用方仅需 username/avatar 等非敏感字段
         return userService.batchGetUserInfo(req.getUserIds());
     }
 

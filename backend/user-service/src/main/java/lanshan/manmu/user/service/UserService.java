@@ -14,7 +14,16 @@ public interface UserService {
     ValidateTokenResp validateToken(String accessToken);
     RefreshTokenResp refreshToken(String refreshToken);
 
-    UserInfo getUserInfo(long userId);
+    /**
+     * 查询用户资料。
+     *
+     * @param userId   目标用户 id
+     * @param viewerId 调用者（查看者）用户 id；等于 userId 时返回完整资料，否则 phone/email 脱敏、balance 置 0
+     */
+    UserInfo getUserInfo(long userId, long viewerId);
+    /**
+     * 批量查询用户资料：默认对每条结果脱敏（phone/email 打码、balance 置 0）。
+     */
     BatchGetUserInfoResp batchGetUserInfo(List<Long> userIds);
     UserInfo updateProfile(long userId, UpdateProfileReq req);
     void updatePassword(long userId, String oldPwd, String newPwd);

@@ -328,12 +328,18 @@ public class UserServiceImpl implements UserService {
     // ==================== 资料 ====================
 
     @Override
-    public UserInfo getUserInfo(long userId) {
+    public UserInfo getUserInfo(long userId, long viewerId) {
         User user = userMapper.selectById(userId);
         if (user == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
-        return toUserInfo(user);
+        // 隐私保护：仅当 viewerId 合法（>0）且等于 userId 时为本人，返回完整资料；
+        // 其余情形（他人，或 viewerId 缺失/非法）一律对 phone/email 脱敏并将 balance 置 0
+        if (viewerId > 0 && userId == viewerId) {
+            return toUserInfo(user);
+        }
+        log.debug("getUserInfo 非本人查询,脱敏返回: userId={}, viewerId={}", userId, viewerId);
+        return maskSensitiveForOther(toUserInfo(user));
     }
 
     @Override
@@ -347,7 +353,11 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.BAD_REQUEST, "单次最多查询 500 个用户");
         }
         List<User> users = userMapper.selectBatchIds(userIds);
-        List<UserInfo> infos = users.stream().map(this::toUserInfo).toList();
+        // 隐私保护：批量查询用于会话成员等场景，调用方仅需 username/avatar 等非敏感字段，
+        // 一律对 phone/email 脱敏、balance 置 0，避免泄露他人手机号/邮箱/余额
+        List<UserInfo> infos = users.stream()
+                .map(u -> maskSensitiveForOther(toUserInfo(u)))
+                .toList();
         BatchGetUserInfoResp resp = new BatchGetUserInfoResp();
         resp.setUsers(infos);
         return resp;
@@ -420,7 +430,7 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.USER_EMAIL_EXISTS);
         }
 
-        return getUserInfo(userId);
+        return getUserInfo(userId, userId);
     }
 
     @Override
@@ -500,6 +510,18 @@ public class UserServiceImpl implements UserService {
         int at = email.indexOf('@');
         if (at <= 1) return email;
         return email.charAt(0) + "****" + email.substring(at);
+    }
+
+    /**
+     * 对"他人视图"的 UserInfo 做脱敏：phone/email 打码、balance 置 0。
+     * 公开字段（username/avatar/gender/bio/birthday/createdAt/updatedAt）保留。
+     */
+    private UserInfo maskSensitiveForOther(UserInfo info) {
+        if (info == null) return null;
+        info.setPhone(maskPhone(info.getPhone()));
+        info.setEmail(maskEmail(info.getEmail()));
+        info.setBalance(BigDecimal.ZERO);
+        return info;
     }
 
     /**
