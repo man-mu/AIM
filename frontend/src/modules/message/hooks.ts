@@ -1,3 +1,4 @@
+import type { InfiniteData } from '@tanstack/react-query';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { messageApi } from '@/apis/message';
@@ -24,12 +25,20 @@ import { createPendingMessage, previewOfContent, type UiMessage } from './model'
 
 /** 游标分页：pages[0]=最新页；fetchNextPage 拉更早历史。 */
 export function useMessagesQuery(conversationId: string | null) {
-  return useInfiniteQuery<ListMessagesData, string>({
+  // TanStack Query v5 泛型顺序：TQueryFnData, TError, TData, TQueryKey, TPageParam
+  // TData 必须为 InfiniteData 形态才能与 MessagesCache（flattenAscending 入参）匹配
+  return useInfiniteQuery<
+    ListMessagesData,
+    Error,
+    InfiniteData<ListMessagesData, string>,
+    readonly ['messages', 'pages', string],
+    string
+  >({
     queryKey: queryKeys.messages.pages(conversationId ?? 'none'),
     initialPageParam: '0',
     queryFn: ({ pageParam, signal }) =>
       messageApi.list(conversationId as string, { cursor: pageParam, limit: 20 }, { signal }),
-    getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : null),
+    getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
     enabled: conversationId !== null,
     staleTime: 15_000,
   });
