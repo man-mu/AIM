@@ -109,9 +109,10 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
             }
             long userId = Long.parseLong(String.valueOf(userIdObj));
 
-            // 5.5 改密吊销：user-service 改密时记录 pwd_changed:{userId}=epoch millis，
+            // 5.5 改密吊销：user-service 改密时记录 pwd_changed:{userId}=epoch 秒，
             // 签发时间（iat）早于改密时间的旧 token 一律拒绝（与 user-service validateToken 对齐）。
-            // 注意：hutool JWT payload 中 iat 为 epoch 秒，需先换算为毫秒再比较。
+            // 注意：hutool JWT payload 中 iat 为 epoch 秒，需先换算为毫秒再比较；
+            // pwd_changed 为秒（兼容历史毫秒值：>=1e12 视为毫秒），同样归一化为毫秒。
             Object iatObj = jwt.getPayload("iat");
             if (iatObj != null) {
                 long iatMillis;
@@ -122,9 +123,20 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
                     iatMillis = 0L;
                 }
                 String pwdChanged = redis.opsForValue().get("pwd_changed:" + userId);
-                if (pwdChanged != null && iatMillis > 0 && iatMillis < Long.parseLong(pwdChanged)) {
-                    log.warn("jwt auth 失败: token 早于改密时间 userId={}", userId);
-                    return unauthorized(exchange, "token revoked");
+                if (pwdChanged != null) {
+                    long changedMillis;
+                    try {
+                        changedMillis = Long.parseLong(pwdChanged);
+                        if (changedMillis < 1_000_000_000_000L) {
+                            changedMillis *= 1000L;
+                        }
+                    } catch (NumberFormatException e) {
+                        changedMillis = 0L;
+                    }
+                    if (iatMillis > 0 && iatMillis < changedMillis) {
+                        log.warn("jwt auth 失败: token 早于改密时间 userId={}", userId);
+                        return unauthorized(exchange, "token revoked");
+                    }
                 }
             }
 

@@ -519,12 +519,14 @@ public class UserServiceImpl implements UserService {
                 .set("updated_at", OffsetDateTime.now());
         userMapper.update(null, wrapper);
 
-        // 改密后吊销该用户改密前签发的全部 token：记录改密时间戳（epoch millis），
+        // 改密后吊销该用户改密前签发的全部 token：记录改密时间戳（epoch 秒）。
+        // 注意：JWT 的 iat 是 epoch 秒（精度仅到秒），pwd_changed 必须同精度存储，
+        // 否则"改密与重新登录发生在同一秒"时新 token 的 iat（毫秒化后）会早于改密时刻而被误杀。
         // validateToken/refreshToken 比对 token 的 iat 是否早于该时间戳，早于则拒绝。
         // TTL 取 refreshToken 最长生命周期（jwtRefreshSec），超过该时长旧 token 自然过期，无需继续保留。
-        long now = System.currentTimeMillis();
+        long nowSec = System.currentTimeMillis() / 1000;
         redisTemplate.opsForValue().set("pwd_changed:" + userId,
-                String.valueOf(now), Duration.ofSeconds(jwtRefreshSec));
+                String.valueOf(nowSec), Duration.ofSeconds(jwtRefreshSec));
         log.info("updatePassword 已记录改密时间戳,吊销改密前 token: userId={}", userId);
     }
 
@@ -781,7 +783,7 @@ public class UserServiceImpl implements UserService {
 
     /**
      * 判断 token 是否在用户最近一次改密之前签发。
-     * <p>改密时记录 {@code pwd_changed:{userId}}=改密时间戳（epoch millis）；
+     * <p>改密时记录 {@code pwd_changed:{userId}}=改密时间戳（epoch 秒）；
      * 若 token 的 iat 早于该时间戳，说明是改密前的旧 token，应拒绝。
      *
      * @param userId token 携带的 userId
@@ -797,7 +799,12 @@ public class UserServiceImpl implements UserService {
             return false;
         }
         try {
-            return iat < Long.parseLong(tsStr);
+            // 单位归一化：pwd_changed 现存储 epoch 秒；兼容历史毫秒值（>=1e12 视为毫秒）
+            long changedMillis = Long.parseLong(tsStr);
+            if (changedMillis < 1_000_000_000_000L) {
+                changedMillis *= 1000L;
+            }
+            return iat < changedMillis;
         } catch (NumberFormatException e) {
             log.warn("pwd_changed 时间戳格式异常: userId={}, value={}", userId, tsStr);
             return false;
