@@ -6,6 +6,9 @@ import lombok.NoArgsConstructor;
 
 /**
  * 获取下载 URL 请求。
+ * <p>Presigned URL 有效期由服务端固定（见
+ * {@link lanshan.manmu.common.constant.CommonConst#FILE_PRESIGN_EXPIRE_SEC}），
+ * 不接受客户端传值。
  */
 @Data
 @NoArgsConstructor
@@ -14,5 +17,4 @@ public class GetDownloadURLReq {
 
     private long fileId;
     private long userId;
-    private int expiresIn;
 }

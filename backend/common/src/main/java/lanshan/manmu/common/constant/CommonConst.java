@@ -30,7 +30,12 @@ public final class CommonConst {
     public static final String REDIS_KEY_MSG_IDEMP   = "msg:idempotent:%s";
     public static final String REDIS_KEY_WS_ONLINE   = "ws:online";
     public static final String REDIS_KEY_WS_USER     = "ws:user:%d:%s";
-    public static final String REDIS_KEY_UNREAD      = "unread:%d:%d";
+    /**
+     * 未读计数 Redis key 前缀，完整 key 形如 {@code aim:unread:{userId}:{convId}}。
+     * <p>跨服务共享契约：message-service 发消息时 INCR 该 key（对除发送者外的成员），
+     * conv-service markRead 时 DEL 该 key。两端必须使用同一前缀，故集中在此声明。
+     */
+    public static final String REDIS_KEY_UNREAD      = "aim:unread:";
 
     // Outbox
     public static final int OUTBOX_STATUS_PENDING = 0;

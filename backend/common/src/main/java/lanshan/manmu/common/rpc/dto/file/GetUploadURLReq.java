@@ -6,6 +6,9 @@ import lombok.NoArgsConstructor;
 
 /**
  * 获取上传 URL 请求。
+ * <p>Presigned URL 有效期由服务端固定（见
+ * {@link lanshan.manmu.common.constant.CommonConst#FILE_PRESIGN_EXPIRE_SEC}），
+ * 不接受客户端传值；请求体中多余的 {@code expiresIn} 字段会被 Jackson 静默忽略。
  */
 @Data
 @NoArgsConstructor
@@ -18,5 +21,4 @@ public class GetUploadURLReq {
     private long uploaderId;
     private int purpose;
     private int access;
-    private int expiresIn;
 }
