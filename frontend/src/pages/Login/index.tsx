@@ -1,19 +1,28 @@
-import {useNavigate} from "react-router";
+import AuthLayout from "@/components/Auth/AuthLayout";
+import LoginForm, { type LoginFormValues } from "@/components/Auth/LoginForm";
+import { useLogin } from "@/hooks/useAuth";
+import { getDeviceId, PLATFORM } from "@/utils/device";
+import type { LoginParams } from "@/types/Auth/Auth";
 
-function Login() {
-    const navigate = useNavigate();
+export default function Login() {
+    const loginMutation = useLogin();
+
+    const handleSubmit = (values: LoginFormValues) => {
+        const params: LoginParams = {
+            account: values.account,
+            password: values.password,
+            deviceId: getDeviceId(),
+            platform: PLATFORM,
+        };
+        loginMutation.mutate(params);
+    };
+
     return (
-        <div>
-            <div><input type="text" placeholder="Username" /></div>
-            <div><input type="password" placeholder="Password" /></div>
-            <div><button
-                style={{backgroundColor: 'red', cursor: 'pointer'}}
-                onClick={() => {
-                    navigate('/');
-                    console.log('login success')
-                }}
-            >Login</button></div>
-        </div>
-    )
+        <AuthLayout title={'\u767b\u5f55'}>
+            <LoginForm
+                onSubmit={handleSubmit}
+                loading={loginMutation.isPending}
+            />
+        </AuthLayout>
+    );
 }
-export default Login;

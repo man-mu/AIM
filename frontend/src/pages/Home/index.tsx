@@ -1,8 +1,6 @@
-function Home() {
-    return (
-        <div className="container mx-auto">
-            <h1>Home</h1>
-        </div>
-    )
+import { ConversationWorkspace } from '@/modules/conversation/ConversationWorkspace';
+
+/** 消息工作台页（/home 与 /home/:conversationId 共用）。 */
+export default function Home(): React.JSX.Element {
+  return <ConversationWorkspace />;
 }
-export default Home;

@@ -1,0 +1,393 @@
+@import "tailwindcss";
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  color: #1d1d1f;
+  background: #f5f5f7;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: #f5f5f7;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.auth-page {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 24px;
+  background: #f5f5f7;
+}
+
+.auth-brand {
+  position: fixed;
+  top: 24px;
+  left: 28px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.auth-panel {
+  width: min(100%, 400px);
+  padding: 32px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+}
+
+.auth-eyebrow {
+  margin: 0 0 8px;
+  color: #6e6e73;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-panel h1 {
+  margin: 0 0 28px;
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.auth-form .ant-form-item-label > label {
+  color: #424245;
+  font-size: 14px;
+}
+
+.auth-form .ant-input,
+.auth-form .ant-input-affix-wrapper {
+  min-height: 44px;
+  border-color: rgba(0, 0, 0, 0.14);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.auth-form .ant-input:focus,
+.auth-form .ant-input-affix-wrapper-focused {
+  border-color: #0071e3;
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16);
+}
+
+.auth-form .ant-btn-primary {
+  min-height: 44px;
+  border-radius: 8px;
+  background: #0071e3;
+  box-shadow: none;
+}
+
+.auth-form .ant-btn-primary:hover {
+  background: #0077ed !important;
+}
+
+.auth-form a {
+  color: #0071e3;
+}
+
+.register-form .register-stepper__list {
+  margin-bottom: 20px;
+}
+
+.register-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.register-form .ant-form-item-label {
+  padding-bottom: 5px;
+}
+
+.register-form .ant-input-affix-wrapper {
+  min-height: 42px;
+  padding: 0 11px;
+  border-radius: 7px;
+}
+
+.register-form .ant-input-affix-wrapper .ant-input {
+  min-height: 0;
+  padding: 0 8px;
+  font-size: 15px;
+}
+
+.register-form .register-stepper__back-row {
+  margin-bottom: 8px;
+}
+
+.register-form .register-stepper__submit {
+  margin-bottom: 14px;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset !important;
+  -webkit-text-fill-color: #1d1d1f !important;
+  transition: background-color 5000s ease-in-out 0s !important;
+  caret-color: #1d1d1f !important;
+}
+
+.register-stepper__list {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 0 28px;
+  padding: 0;
+  list-style: none;
+}
+
+.register-stepper__list::before,
+.register-stepper__list::after {
+  position: absolute;
+  z-index: 0;
+  top: 14px;
+  left: 25%;
+  width: 50%;
+  height: 1px;
+  content: '';
+}
+
+.register-stepper__list::before {
+  background: #d2d2d7;
+}
+
+.register-stepper__list::after {
+  background: #0071e3;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 180ms ease;
+}
+
+.register-stepper__list--complete::after {
+  transform: scaleX(1);
+}
+
+.register-stepper__item {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #86868b;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.register-stepper__node {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #d2d2d7;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.register-stepper__item.is-current,
+.register-stepper__item.is-complete {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+.register-stepper__item.is-current .register-stepper__node,
+.register-stepper__item.is-complete .register-stepper__node {
+  border-color: #0071e3;
+  background: #0071e3;
+  color: #fff;
+}
+
+.register-stepper__content {
+  overflow: hidden;
+  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.register-stepper__panel {
+  animation: register-stepper-panel-in 180ms ease-out;
+}
+
+@keyframes register-stepper-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.register-stepper__back-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: -4px 0 16px;
+}
+
+.register-stepper__back.ant-btn {
+  width: 36px;
+  height: 36px;
+  color: #424245;
+}
+
+.register-stepper__submit {
+  margin-bottom: 20px;
+}
+
+@media (max-width: 480px) {
+  .auth-page {
+    align-items: start;
+    padding: 104px 16px 16px;
+  }
+
+  .auth-brand {
+    top: 20px;
+    left: 20px;
+  }
+
+  .auth-panel {
+    padding: 24px;
+  }
+
+  .register-stepper__list {
+    margin-bottom: 24px;
+  }
+
+  .register-form .register-stepper__list {
+    margin-bottom: 18px;
+  }
+
+  .register-form .ant-form-item {
+    margin-bottom: 16px;
+  }
+
+  .register-form .ant-input-affix-wrapper {
+    min-height: 40px;
+  }
+
+  .register-stepper__label {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .register-stepper__content {
+    transition: none;
+  }
+
+  .register-stepper__panel {
+    animation: none;
+  }
+}
+
+/* ---- Toast ---- */
+@keyframes aim-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.aim-toast-enter {
+  animation: aim-toast-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aim-toast-enter {
+    animation: none;
+  }
+}
+
+/* ---- Spinner ---- */
+@keyframes aim-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.aim-spinner {
+  animation: aim-spin 700ms linear infinite;
+}
+
+/* ---- Dialog ---- */
+@keyframes aim-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.aim-dialog[open] {
+  animation: aim-dialog-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---- Menu (popover) ---- */
+@keyframes aim-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.aim-menu:popover-open {
+  animation: aim-menu-in 150ms ease-out;
+}
+
+/* ---- Typing dots ---- */
+@keyframes aim-typing-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.aim-typing-dots i {
+  animation: aim-typing-bounce 1.2s ease-in-out infinite;
+}
+
+.aim-typing-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.aim-typing-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aim-spinner,
+  .aim-dialog[open],
+  .aim-menu:popover-open,
+  .aim-typing-dots i {
+    animation: none;
+  }
+}
