@@ -34,6 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class FileServiceImpl implements FileService {
 
+    /** 批量查询文件数量上限，与 user-service batchGetUserInfo(500) 对齐，防大 IN 查询性能风险 */
+    private static final int BATCH_QUERY_MAX_SIZE = 500;
+
     private final FileMapper fileMapper;
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
@@ -80,7 +83,7 @@ public class FileServiceImpl implements FileService {
         // 4. 生成 objectKey
         String objectKey = FileValidator.buildObjectKey(fileId, safeExt);
 
-        // 5. 生成 Presigned PUT URL（服务端固定 1800 秒，忽略 req.getExpiresIn()）
+        // 5. 生成 Presigned PUT URL（有效期服务端固定 1800s = FILE_PRESIGN_EXPIRE_SEC）
         String uploadUrl;
         try {
             uploadUrl = minioClient.getPresignedObjectUrl(
@@ -312,6 +315,11 @@ public class FileServiceImpl implements FileService {
         if (fileIds == null || fileIds.isEmpty()) {
             return List.of();
         }
+        // 数量上限与 user-service batchGetUserInfo 对齐（500），防大 IN 查询性能/内存风险
+        if (fileIds.size() > BATCH_QUERY_MAX_SIZE) {
+            throw new BizException(ErrorCode.BAD_REQUEST,
+                    "单次最多查询 " + BATCH_QUERY_MAX_SIZE + " 个文件");
+        }
         List<FileEntity> entities = fileMapper.selectBatchIds(fileIds);
         return entities.stream()
                 .filter(e -> e.getStatus() == CommonConst.FILE_STATUS_CONFIRMED)
@@ -410,7 +418,16 @@ public class FileServiceImpl implements FileService {
             }
 
             // 硬删除 DB 记录（zombie 直接物理删除，不留软删痕迹）
-            fileMapper.deleteById(zombie.getId());
+            // 关键：删除条件带 status=PENDING，防止 selectList 与 delete 之间的并发竞态——
+            // 若客户端在此期间完成 confirmUpload（status→CONFIRMED），带条件的 delete 不会误删已确认记录，
+            // 避免"MinIO 对象在但元数据丢失"的数据不一致。
+            int deleted = fileMapper.delete(
+                    new LambdaQueryWrapper<FileEntity>()
+                            .eq(FileEntity::getId, zombie.getId())
+                            .eq(FileEntity::getStatus, CommonConst.FILE_STATUS_PENDING));
+            if (deleted == 0) {
+                log.info("zombie 记录已被并发更新（可能已确认/删除），跳过清理 fileId={}", zombie.getId());
+            }
         }
 
         log.info("zombie 清理完成，共清理 {} 条", zombies.size());

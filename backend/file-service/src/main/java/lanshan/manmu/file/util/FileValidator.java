@@ -21,6 +21,13 @@ public final class FileValidator {
     private static final Set<String> MIME_PREFIX_WHITELIST = Set.of(
             "image/", "video/", "audio/"
     );
+    /**
+     * 前缀白名单内的精确拒绝集：image/ 前缀虽放行普通图片，但 image/svg+xml 可内嵌
+     * &lt;script&gt;，浏览器直开即 XSS，必须显式排除。
+     */
+    private static final Set<String> MIME_EXACT_BLOCKLIST = Set.of(
+            "image/svg+xml"
+    );
     private static final Set<String> MIME_EXACT_WHITELIST = Set.of(
             "application/pdf",
             "text/plain",
@@ -62,6 +69,11 @@ public final class FileValidator {
     public static void validateMimeType(String mimeType) {
         if (mimeType == null || mimeType.isEmpty()) {
             throw new BizException(ErrorCode.FILE_TYPE_NOT_SUPPORT, "MIME 类型为空");
+        }
+        // 先判精确黑名单（SVG 等可执行内容），防止被 image/ 前缀误放行
+        if (MIME_EXACT_BLOCKLIST.contains(mimeType)) {
+            throw new BizException(ErrorCode.FILE_TYPE_NOT_SUPPORT,
+                    "不支持的 MIME 类型（安全风险）: " + mimeType);
         }
         for (String prefix : MIME_PREFIX_WHITELIST) {
             if (mimeType.startsWith(prefix)) return;

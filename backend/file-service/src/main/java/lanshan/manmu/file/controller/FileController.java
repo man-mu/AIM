@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>upload-url/uploaderId → 覆盖为 X-User-Id（网关已鉴权，忽略前端传值）</li>
  *   <li>confirm/uploaderId → 覆盖为 X-User-Id</li>
  *   <li>download/userId → 从 X-User-Id 取（不暴露 query 中的 userId）</li>
- *   <li>download/expiresIn → query 参数，默认 3600</li>
+ *   <li>download → Presigned URL 有效期服务端固定（FILE_PRESIGN_EXPIRE_SEC），不接受客户端传值</li>
  *   <li>delete → fileId 取自 path，userId 取自 X-User-Id（DELETE 不用 body，与 api-v1.md §7.5 略有偏差但更 RESTful）</li>
  * </ul>
  */
@@ -59,9 +59,9 @@ public class FileController {
 
     @GetMapping("/{fileId}/download")
     public Result<GetDownloadURLResp> download(@RequestHeader("X-User-Id") long userId,
-                                                @PathVariable("fileId") long fileId,
-                                                @RequestParam(value = "expiresIn", defaultValue = "3600") int expiresIn) {
-        GetDownloadURLReq req = new GetDownloadURLReq(fileId, userId, expiresIn);
+                                                @PathVariable("fileId") long fileId) {
+        // Presigned URL 有效期由服务端固定（FILE_PRESIGN_EXPIRE_SEC），忽略客户端可能携带的 expiresIn 查询参数
+        GetDownloadURLReq req = new GetDownloadURLReq(fileId, userId);
         return Result.ok(fileService.getDownloadURL(req));
     }
 
