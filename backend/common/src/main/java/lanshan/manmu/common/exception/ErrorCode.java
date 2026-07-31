@@ -35,17 +35,17 @@ public enum ErrorCode {
     USER_TOKEN_INVALID    (10005, "Token 无效或已过期"),
     USER_TOKEN_EXPIRED    (10006, "Token 已过期"),
     USER_SESSION_NOT_FOUND(10007, "会话不存在"),
-    USER_FORBIDDEN        (10008, "用户被禁用"),
+    USER_FORBIDDEN        (10008, "登录失败次数过多，请稍后再试"),
     USER_EMAIL_EXISTS     (10009, "邮箱已被注册"),
 
-    // friend-service 2xxxx
-    FRIEND_ALREADY_EXISTS    (20001, "已经是好友"),
-    FRIEND_NOT_EXISTS        (20002, "非好友关系"),
-    FRIEND_REQUEST_EXISTS    (20003, "好友申请已存在"),
-    FRIEND_REQUEST_NOT_FOUND (20004, "好友申请不存在"),
-    FRIEND_REQUEST_HANDLED   (20005, "申请已处理"),
-    BLOCKED_BY_USER          (20006, "已被对方拉黑"),
-    ALREADY_BLOCKED          (20007, "已拉黑该用户"),
+    // friend-service 2xxxx（语义按 API/api-v1-implemented.md 第 10 章契约定稿，与前端 errorCodes 对齐）
+    FRIEND_ALREADY_EXISTS    (20001, "你们已经是好友了"),
+    FRIEND_REQUEST_HANDLED   (20002, "好友申请不存在或已处理"),
+    NOT_FRIEND               (20003, "对方不是你的好友"),
+    FRIEND_SELF              (20004, "不能添加自己为好友"),
+    FRIEND_GROUP_NOT_FOUND   (20005, "好友分组不存在"),
+    BLOCKED_BY_YOU           (20006, "对方已被你拉黑"),
+    BLOCKED_BY_THEM          (20007, "你已被对方拉黑"),
     NOT_BLOCKED              (20008, "未拉黑该用户"),
 
     // conv-service 3xxxx
@@ -56,15 +56,15 @@ public enum ErrorCode {
     CONV_PERMISSION_DENIED(30005, "权限不足"),
     CONV_MUTED            (30006, "已被禁言"),
     CONV_MUTED_ALL        (30007, "全员禁言中"),
-    CONV_MEMBER_LIMIT     (30008, "成员数超上限"),
+    CONV_MEMBER_LIMIT     (30008, "成员数量已达上限（500）"),
     CONV_OWNER_TRANSFER_SELF(30009, "不能转让给自己"),
 
     // message-service 4xxxx
     MESSAGE_NOT_FOUND      (40001, "消息不存在"),
-    MESSAGE_RECALL_TIMEOUT (40002, "撤回超时"),
-    MESSAGE_EDIT_TIMEOUT   (40003, "编辑超时"),
-    MESSAGE_DUPLICATE      (40004, "重复消息"),
-    MESSAGE_NOT_SENDER     (40005, "非消息发送者"),
+    MESSAGE_RECALL_TIMEOUT (40002, "已超过可撤回时间"),
+    MESSAGE_EDIT_TIMEOUT   (40003, "已超过可编辑时间"),
+    MESSAGE_DUPLICATE      (40004, "请勿重复发送"),
+    MESSAGE_NOT_SENDER     (40005, "没有操作该消息的权限"),
     MESSAGE_ALREADY_RECALLED(40006, "消息已撤回"),
     MESSAGE_SEQ_GEN_FAILED (40007, "序号生成失败"),
 
