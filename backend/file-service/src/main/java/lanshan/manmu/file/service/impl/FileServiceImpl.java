@@ -4,6 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
+import io.minio.StatObjectResponse;
+import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
@@ -30,6 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 @Service
 public class FileServiceImpl implements FileService {
+
+    /** 批量查询文件数量上限，与 user-service batchGetUserInfo(500) 对齐，防大 IN 查询性能风险 */
+    private static final int BATCH_QUERY_MAX_SIZE = 500;
 
     private final FileMapper fileMapper;
     private final MinioClient minioClient;
@@ -77,7 +83,7 @@ public class FileServiceImpl implements FileService {
         // 4. 生成 objectKey
         String objectKey = FileValidator.buildObjectKey(fileId, safeExt);
 
-        // 5. 生成 Presigned PUT URL（服务端固定 1800 秒，忽略 req.getExpiresIn()）
+        // 5. 生成 Presigned PUT URL（有效期服务端固定 1800s = FILE_PRESIGN_EXPIRE_SEC）
         String uploadUrl;
         try {
             uploadUrl = minioClient.getPresignedObjectUrl(
@@ -133,6 +139,8 @@ public class FileServiceImpl implements FileService {
      *   - fileId 不存在 → FILE_NOT_FOUND
      *   - status 不是 PENDING → BAD_REQUEST（已确认或已删除）
      *   - uploaderId 不匹配 → FILE_NOT_UPLOADER
+     *   - MinIO 对象未上传（只申请 URL 未 PUT）→ FILE_UPLOAD_FAILED
+     *   - MinIO 实际大小超过声明 size → FILE_TOO_LARGE（拒绝确认并删除对象）
      *   - MD5 不匹配（Phase 1 仅日志不阻断）
      */
     @Override
@@ -152,6 +160,55 @@ public class FileServiceImpl implements FileService {
         if (entity.getStatus() != CommonConst.FILE_STATUS_PENDING) {
             throw new BizException(ErrorCode.BAD_REQUEST,
                     "文件状态非 PENDING，当前状态: " + entity.getStatus());
+        }
+
+        // 服务端强制校验 MinIO 实际大小：Presigned PUT URL 无 Content-Length 上限，
+        // 客户端上报的 size 不可信（可谎报小值实际传大文件耗尽存储）。
+        // 用 statObject 取对象真实大小，超过声明值则拒绝确认并清理对象。
+        StatObjectResponse stat;
+        try {
+            stat = minioClient.statObject(StatObjectArgs.builder()
+                    .bucket(entity.getBucket())
+                    .object(entity.getKey())
+                    .build());
+        } catch (ErrorResponseException e) {
+            if (e.errorResponse() != null && "NoSuchKey".equals(e.errorResponse().code())) {
+                // 对象未上传：客户端只申请了 URL 没真正 PUT
+                log.warn("确认上传失败：MinIO 对象不存在 fileId={}, key={}",
+                        req.getFileId(), entity.getKey());
+                throw new BizException(ErrorCode.FILE_UPLOAD_FAILED, "文件对象未上传，无法确认");
+            }
+            log.error("确认上传失败：MinIO statObject 错误 fileId={}, key={}",
+                    req.getFileId(), entity.getKey(), e);
+            throw new BizException(ErrorCode.FILE_UPLOAD_FAILED, "校验文件大小失败");
+        } catch (Exception e) {
+            log.error("确认上传失败：MinIO statObject 异常 fileId={}, key={}",
+                    req.getFileId(), entity.getKey(), e);
+            throw new BizException(ErrorCode.FILE_UPLOAD_FAILED, "校验文件大小失败");
+        }
+
+        long actualSize = stat.size();
+        if (actualSize > entity.getSize()) {
+            // 实际大小超过声明 → 拒绝确认 + best-effort 删除对象（防存储耗尽）
+            log.warn("确认上传失败：实际大小超过声明 fileId={}, declaredSize={}, actualSize={}",
+                    req.getFileId(), entity.getSize(), actualSize);
+            try {
+                minioClient.removeObject(RemoveObjectArgs.builder()
+                        .bucket(entity.getBucket())
+                        .object(entity.getKey())
+                        .build());
+                log.info("已删除超限对象 fileId={}, key={}", req.getFileId(), entity.getKey());
+            } catch (Exception e) {
+                log.error("删除超限对象失败 fileId={}, key={}", req.getFileId(), entity.getKey(), e);
+            }
+            throw new BizException(ErrorCode.FILE_TOO_LARGE,
+                    "实际文件大小 " + actualSize + " 超过声明值 " + entity.getSize());
+        }
+        // 实际大小 ≤ 声明：用真实值校正 DB 记录（客户端上报可能偏大）
+        if (actualSize != entity.getSize()) {
+            log.debug("文件实际大小与声明不一致，以实际为准 fileId={}, declaredSize={}, actualSize={}",
+                    req.getFileId(), entity.getSize(), actualSize);
+            entity.setSize(actualSize);
         }
 
         // TODO 反模式：当前仅存储前端上报的 MD5，不校验，Phase 2 应改为服务端从 MinIO 下载后自行计算 MD5
@@ -258,6 +315,11 @@ public class FileServiceImpl implements FileService {
         if (fileIds == null || fileIds.isEmpty()) {
             return List.of();
         }
+        // 数量上限与 user-service batchGetUserInfo 对齐（500），防大 IN 查询性能/内存风险
+        if (fileIds.size() > BATCH_QUERY_MAX_SIZE) {
+            throw new BizException(ErrorCode.BAD_REQUEST,
+                    "单次最多查询 " + BATCH_QUERY_MAX_SIZE + " 个文件");
+        }
         List<FileEntity> entities = fileMapper.selectBatchIds(fileIds);
         return entities.stream()
                 .filter(e -> e.getStatus() == CommonConst.FILE_STATUS_CONFIRMED)
@@ -356,7 +418,16 @@ public class FileServiceImpl implements FileService {
             }
 
             // 硬删除 DB 记录（zombie 直接物理删除，不留软删痕迹）
-            fileMapper.deleteById(zombie.getId());
+            // 关键：删除条件带 status=PENDING，防止 selectList 与 delete 之间的并发竞态——
+            // 若客户端在此期间完成 confirmUpload（status→CONFIRMED），带条件的 delete 不会误删已确认记录，
+            // 避免"MinIO 对象在但元数据丢失"的数据不一致。
+            int deleted = fileMapper.delete(
+                    new LambdaQueryWrapper<FileEntity>()
+                            .eq(FileEntity::getId, zombie.getId())
+                            .eq(FileEntity::getStatus, CommonConst.FILE_STATUS_PENDING));
+            if (deleted == 0) {
+                log.info("zombie 记录已被并发更新（可能已确认/删除），跳过清理 fileId={}", zombie.getId());
+            }
         }
 
         log.info("zombie 清理完成，共清理 {} 条", zombies.size());

@@ -39,16 +39,22 @@ public class UserRpcServiceImpl implements UserRpcService {
 
     @Override
     public RefreshTokenResp refreshToken(RefreshTokenReq req) {
-        return userService.refreshToken(req.getRefreshToken());
+        // userService.refreshToken 轮换返回本地 RefreshTokenResponse（含新 refreshToken），
+        // common RefreshTokenResp 契约仅含 accessToken，映射时丢弃 refreshToken（RPC 路径无实际消费者）。
+        lanshan.manmu.user.dto.RefreshTokenResponse resp =
+                userService.refreshToken(req.getRefreshToken());
+        return new RefreshTokenResp(resp.accessToken(), resp.accessExpire());
     }
 
     @Override
-    public UserInfo getUserInfo(GetUserInfoReq req) {
-        return userService.getUserInfo(req.getUserId());
+    public UserInfo getUserInfo(GetUserInfoReq req, long viewerId) {
+        // 透传调用者 viewerId，由 UserServiceImpl 依据"是否本人"决定脱敏
+        return userService.getUserInfo(req.getUserId(), viewerId);
     }
 
     @Override
     public BatchGetUserInfoResp batchGetUserInfo(BatchGetUserInfoReq req) {
+        // 默认全量脱敏：调用方仅需 username/avatar 等非敏感字段
         return userService.batchGetUserInfo(req.getUserIds());
     }
 

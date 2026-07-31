@@ -23,15 +23,11 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
-        <!-- FastJSON2 -->
+        <!-- FastJSON2（仅 common 测试 EventDtosSerializationTest 使用；作用域 test，不向依赖方传递） -->
         <dependency>
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
-        </dependency>
-        <!-- Hutool 工具集 -->
-        <dependency>
-            <groupId>cn.hutool</groupId>
-            <artifactId>hutool-all</artifactId>
+            <scope>test</scope>
         </dependency>
         <!-- Jackson 注解 (用于 event DTO 的 @JsonProperty snake_case 映射) -->
         <dependency>

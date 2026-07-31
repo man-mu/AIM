@@ -1,29 +1,68 @@
+# application.yml
+# 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
+# 业务配置（数据源、Redis、Dubbo、雪花算法等）全部在 Nacos 配置中心对应 namespace 的 friend-service.yml DataId 下
+# friend-service 同时暴露 HTTP（8084，供 gateway 转发）+ Dubbo Provider（20882，供其他业务服务 RPC 调用）
 spring:
   application:
     name: friend-service
-  datasource:
-    url: jdbc:postgresql://localhost:5432/aim
-    username: postgres
-    password: postgres
-    driver-class-name: org.postgresql.Driver
-  data:
-    redis:
-      host: localhost
-      port: 6379
   cloud:
     nacos:
+      # 公共连接属性，config / discovery 模块自动继承
+      server-addr: ${NACOS_ADDR:localhost:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      # group 不能放公共层（discovery 默认 DEFAULT_GROUP，config 才用 AIM_GROUP）
+      config:
+        group: ${NACOS_GROUP:AIM_GROUP}
+        file-extension: yml
       discovery:
-        server-addr: localhost:8848
+        group: ${NACOS_GROUP:AIM_GROUP}
+  config:
+    import:
+      # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
+      # 第二条拉共享公共配置
+      - optional:nacos:friend-service.yml
+      - optional:nacos:application.yml?group=COMMON_GROUP
+  jackson:
+    serialization:
+      write-bigdecimal-as-plain: true
+
+server:
+  port: ${SERVER_PORT:8084}
+  forward-headers-strategy: framework
 
 dubbo:
-  application:
-    name: friend-service
-  protocol:
-    name: dubbo
-    port: 20882
-  registry:
-    address: nacos://localhost:8848
+  qos:
+    enable: false  # 禁用 QoS 运维端口（22222），避免多服务同主机启动时端口冲突
 
-mybatis-plus:
-  configuration:
-    map-underscore-to-camel-case: true
+# ============================================================
+# 以下为 Nacos DataId（friend-service.yml，AIM_GROUP）应包含的业务配置模板
+# 敏感值用占位符，由环境变量注入；dev namespace bake 了 localhost 默认值
+# 本段为注释（不生效），仅作 Nacos 配置录入参考；实际值在 Nacos 配置中心维护
+# ============================================================
+# spring:
+#   datasource:
+#     url: jdbc:postgresql://${DB_HOST:localhost}:5432/aim?currentSchema=%22friend%22&stringtype=unspecified
+#     username: ${DB_USER:postgres}
+#     password: ${DB_PASSWORD:postgres}
+#     driver-class-name: org.postgresql.Driver
+#   data:
+#     redis:
+#       host: ${REDIS_HOST:localhost}
+#       port: ${REDIS_PORT:6379}
+# dubbo:
+#   application:
+#     name: friend-service
+#   protocol:
+#     name: dubbo
+#     port: 20882
+#   registry:
+#     # registry 地址必须带鉴权（user:pass@host?namespace&group），否则 Dubbo 匿名访问 Nacos OpenAPI 被 401 拒绝
+#     address: nacos://${NACOS_USERNAME:nacos}:${NACOS_PASSWORD:nacos}@${NACOS_ADDR:localhost:8848}?namespace=${NACOS_NAMESPACE:dev}&group=${NACOS_GROUP:AIM_GROUP}
+# mybatis-plus:
+#   configuration:
+#     map-underscore-to-camel-case: true   # 已在 COMMON_GROUP/application.yml 共享，可省略
+# aim:
+#   snowflake:
+#     worker-id: 1   # 已分配：user=0, conv=3, file=4；friend 建议分配 1

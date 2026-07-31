@@ -224,7 +224,7 @@ aim-common, spring-boot-starter, dubbo-spring-boot-starter, minio, nacos-discove
 
 > **不需要** `spring-security-crypto`（file-service 无密码哈希需求）。
 > **不需要** `spring-boot-starter-data-redis`（file-service 不用 Redis）。
-> **不需要** `spring-boot-starter-web`（file-service 不暴露 HTTP，只走 Dubbo）。
+> **需要** `spring-boot-starter-web`（spec-rev: 架构 1 双协议暴露，file-service 同时暴露 HTTP 8083 + Dubbo 20884，HTTP Controller 规范见 [controller-spec.md](./controller-spec.md)）。
 
 ---
 

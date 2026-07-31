@@ -1,0 +1,35 @@
+# 集成测试专用配置（@ActiveProfiles("test") 激活）
+# 禁用 Nacos 配置拉取和服务注册，避免连真实 Nacos
+# 排除 Dubbo 自动配置：避免 @DubboReference 启动时尝试找 provider（@MockBean 由 ReflectionTestUtils 注入）
+# Kafka listener.auto-startup=false 避免 @KafkaListener 启动（Kafka 链路测试直接调 consumer 方法）
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboAutoConfiguration
+  cloud:
+    nacos:
+      config:
+        import-check:
+          enabled: false
+        enabled: false
+      discovery:
+        enabled: false
+    # 覆盖 application.yml 的 spring.config.import，禁用 Nacos 配置拉取
+    config:
+      import: ""
+  # 数据源和 Redis 由 ConvIntegrationTestBase 的 @DynamicPropertySource 动态注入
+  kafka:
+    listener:
+      auto-startup: false
+
+# @EnableDubbo 在主应用类上不受 autoconfigure.exclude 影响，Dubbo 仍会启动；
+# consumer check=false 避免启动时因无 UserRpcService provider 而失败
+# （引用由测试基类 @MockBean + ReflectionTestUtils 注入 mock 替换）
+dubbo:
+  consumer:
+    check: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

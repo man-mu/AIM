@@ -1,7 +1,7 @@
 # application.yml
 # 1) Nacos 连接属性 + 触发拉取  2) 最小兜底
 # 业务配置（数据源、MinIO、Dubbo 等）全部在 Nacos 配置中心对应 namespace 的 file-service.yml DataId 下
-# file-service 是纯 Dubbo Provider，不对外提供 HTTP 端口
+# file-service 同时暴露 HTTP（8083，供 gateway 转发）+ Dubbo Provider（20884，供其他业务服务 RPC 调用）
 spring:
   application:
     name: file-service
@@ -23,3 +23,14 @@ spring:
       # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
       - optional:nacos:file-service.yml
       - optional:nacos:application.yml?group=COMMON_GROUP
+  jackson:
+    serialization:
+      write-bigdecimal-as-plain: true
+
+server:
+  port: ${SERVER_PORT:8083}
+  forward-headers-strategy: framework
+
+dubbo:
+  qos:
+    enable: false  # 禁用 QoS 运维端口（22222），避免多服务同主机启动时端口冲突

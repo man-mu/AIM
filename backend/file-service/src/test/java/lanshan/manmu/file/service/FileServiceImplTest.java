@@ -2,12 +2,17 @@ package lanshan.manmu.file.service;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import java.io.ByteArrayInputStream;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import lanshan.manmu.common.constant.CommonConst;
 import lanshan.manmu.common.exception.BizException;
 import lanshan.manmu.common.exception.ErrorCode;
 import lanshan.manmu.common.rpc.dto.file.*;
+import lanshan.manmu.file.config.MinioConfig;
 import lanshan.manmu.file.mapper.FileMapper;
 import lanshan.manmu.file.model.entity.FileEntity;
 import org.junit.jupiter.api.*;
@@ -64,6 +69,8 @@ class FileServiceImplTest {
 
     private final FileService fileService;
     private final FileMapper fileMapper;
+    private final MinioClient minioClient;
+    private final MinioConfig minioConfig;
 
     /** 主链路 fileId（getUploadURL→confirm→download→delete） */
     private long fileId;
@@ -73,9 +80,26 @@ class FileServiceImplTest {
     private final List<Long> createdFileIds = new ArrayList<>();
 
     @Autowired
-    public FileServiceImplTest(FileService fileService, FileMapper fileMapper) {
+    public FileServiceImplTest(FileService fileService, FileMapper fileMapper,
+                               MinioClient minioClient, MinioConfig minioConfig) {
         this.fileService = fileService;
         this.fileMapper = fileMapper;
+        this.minioClient = minioClient;
+        this.minioConfig = minioConfig;
+    }
+
+    /** 向 MinIO 真实上传测试对象（key/bucket 取自 DB 记录） */
+    private void uploadObject(long id, byte[] content) {
+        FileEntity entity = fileMapper.selectById(id);
+        try {
+            minioClient.putObject(PutObjectArgs.builder()
+                    .bucket(minioConfig.getBucket())
+                    .object(entity.getKey())
+                    .stream(new ByteArrayInputStream(content), content.length, -1)
+                    .build());
+        } catch (Exception e) {
+            throw new RuntimeException("测试上传对象失败 fileId=" + id, e);
+        }
     }
 
     @AfterAll
@@ -97,7 +121,7 @@ class FileServiceImplTest {
     /**
      * 正常获取上传 URL。
      * 验证：fileId > 0、uploadUrl 含 "aim"、key 以 "files/" 开头、expiresAt 在未来、DB 有 PENDING 记录。
-     * 同时验证 expiresIn 被忽略：req 传 10 秒，resp.expiresAt 仍 > now+60s（说明服务端用了 1800s）。
+     * expiresAt 在未来（服务端固定 1800s 有效期，FILE_PRESIGN_EXPIRE_SEC）。
      */
     @Test
     @Order(1)
@@ -109,7 +133,6 @@ class FileServiceImplTest {
         req.setPurpose(1);
         req.setAccess(1);
         req.setUploaderId(UPLOADER_ID);
-        req.setExpiresIn(10);  // 故意传 10 秒，应被忽略
 
         GetUploadURLResp resp = fileService.getUploadURL(req);
 
@@ -120,7 +143,7 @@ class FileServiceImplTest {
         assertNotNull(resp.getKey());
         assertTrue(resp.getKey().startsWith("files/"));
         assertTrue(resp.getExpiresAt() > System.currentTimeMillis() + 60_000,
-                "expiresAt 至少在 60s 以后，说明服务端忽略 10s 用了 1800s");
+                "expiresAt 至少在 60s 以后（服务端固定 1800s 有效期）");
 
         fileId = track(resp.getFileId());
 
@@ -148,10 +171,15 @@ class FileServiceImplTest {
 
     /**
      * 正常确认上传 → status 变为 CONFIRMED。
+     * <p>confirmUpload 现在会 statObject 校验 MinIO 实际大小，故确认前先真实上传对象。
      */
     @Test
     @Order(3)
     void shouldConfirmUpload() {
+        // 真实上传 1024 字节（与 getUploadURL 声明一致）
+        byte[] content = new byte[1024];
+        uploadObject(fileId, content);
+
         ConfirmUploadReq req = new ConfirmUploadReq();
         req.setFileId(fileId);
         req.setUploaderId(UPLOADER_ID);
@@ -468,5 +496,197 @@ class FileServiceImplTest {
         List<FileInfo> infos = fileService.batchGetFileInfo(List.of(), UPLOADER_ID);
         assertNotNull(infos);
         assertTrue(infos.isEmpty());
+    }
+
+    // ==================== confirmUpload 服务端实际大小校验（#6） ====================
+
+    /** 新建 PENDING 文件并返回 fileId（声明 size=1024） */
+    private long newPendingFile() {
+        GetUploadURLReq req = new GetUploadURLReq();
+        req.setName("check.jpg");
+        req.setSize(1024);
+        req.setMimeType("image/jpeg");
+        req.setPurpose(1);
+        req.setAccess(1);
+        req.setUploaderId(UPLOADER_ID);
+        return track(fileService.getUploadURL(req).getFileId());
+    }
+
+    /**
+     * 只申请 URL 未实际上传对象 → confirmUpload 拒绝（FILE_UPLOAD_FAILED）。
+     * <p>防僵尸记录：statObject NoSuchKey 时不允许确认。
+     */
+    @Test
+    @Order(23)
+    void shouldRejectConfirmObjectNotUploaded() {
+        long id = newPendingFile();
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.confirmUpload(req));
+        assertEquals(ErrorCode.FILE_UPLOAD_FAILED.getCode(), ex.getCode());
+
+        // DB 记录保持 PENDING，未被误确认
+        assertEquals(CommonConst.FILE_STATUS_PENDING,
+                fileMapper.selectById(id).getStatus());
+    }
+
+    /**
+     * 实际上传大小超过声明值 → confirmUpload 拒绝（FILE_TOO_LARGE）并删除 MinIO 对象。
+     */
+    @Test
+    @Order(24)
+    void shouldRejectConfirmOversizeActual() {
+        long id = newPendingFile();
+        // 声明 1024 字节，实际上传 2048 字节
+        uploadObject(id, new byte[2048]);
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.confirmUpload(req));
+        assertEquals(ErrorCode.FILE_TOO_LARGE.getCode(), ex.getCode());
+
+        // DB 记录保持 PENDING + MinIO 对象已被清理（statObject 应 NoSuchKey）
+        assertEquals(CommonConst.FILE_STATUS_PENDING,
+                fileMapper.selectById(id).getStatus());
+        assertThrows(Exception.class, () -> minioClient.statObject(
+                io.minio.StatObjectArgs.builder()
+                        .bucket(minioConfig.getBucket())
+                        .object(fileMapper.selectById(id).getKey())
+                        .build()));
+    }
+
+    /**
+     * 实际大小小于声明值 → 确认成功且 DB size 校正为实际值。
+     */
+    @Test
+    @Order(25)
+    void shouldConfirmCorrectionWhenActualSmaller() {
+        long id = newPendingFile();
+        // 声明 1024 字节，实际上传 100 字节
+        uploadObject(id, new byte[100]);
+
+        ConfirmUploadReq req = new ConfirmUploadReq();
+        req.setFileId(id);
+        req.setUploaderId(UPLOADER_ID);
+
+        ConfirmUploadResp resp = fileService.confirmUpload(req);
+        assertEquals(CommonConst.FILE_STATUS_CONFIRMED, resp.getFile().getStatus());
+        assertEquals(100L, fileMapper.selectById(id).getSize(),
+                "DB size 应以 MinIO 实际大小为准");
+    }
+
+    // ==================== SVG XSS 防护 / batch 上限 / zombie 竞态 ====================
+
+    /**
+     * SVG MIME（image/svg+xml）→ 拒绝（FILE_TYPE_NOT_SUPPORT），防浏览器直开 XSS。
+     * 即使 image/ 前缀在白名单，SVG 也应被精确黑名单拦截。
+     */
+    @Test
+    @Order(26)
+    void shouldRejectSvgMimeForXss() {
+        GetUploadURLReq req = new GetUploadURLReq();
+        req.setName("evil.svg");
+        req.setSize(1024);
+        req.setMimeType("image/svg+xml");
+        req.setPurpose(1);
+        req.setUploaderId(UPLOADER_ID);
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.getUploadURL(req));
+        assertEquals(ErrorCode.FILE_TYPE_NOT_SUPPORT.getCode(), ex.getCode());
+    }
+
+    /**
+     * 普通 image/png 仍应放行（验证 SVG 拦截不影响其他图片类型）。
+     */
+    @Test
+    @Order(27)
+    void shouldStillAllowPngImage() {
+        GetUploadURLReq req = new GetUploadURLReq();
+        req.setName("ok.png");
+        req.setSize(1024);
+        req.setMimeType("image/png");
+        req.setPurpose(1);
+        req.setUploaderId(UPLOADER_ID);
+
+        GetUploadURLResp resp = fileService.getUploadURL(req);
+        long id = track(resp.getFileId());
+        assertNotNull(resp.getUploadUrl());
+        assertEquals("image/png", fileMapper.selectById(id).getMimeType());
+    }
+
+    /**
+     * batchGetFileInfo 超过 500 上限 → BAD_REQUEST（与 user-service 对齐）。
+     */
+    @Test
+    @Order(28)
+    void shouldRejectBatchOverLimit() {
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < 501; i++) {
+            ids.add((long) i);
+        }
+
+        BizException ex = assertThrows(BizException.class,
+                () -> fileService.batchGetFileInfo(ids, UPLOADER_ID));
+        assertEquals(ErrorCode.BAD_REQUEST.getCode(), ex.getCode());
+    }
+
+    /**
+     * batchGetFileInfo 恰好 500 → 不抛异常（边界值放行）。
+     */
+    @Test
+    @Order(29)
+    void shouldAllowBatchAtLimit() {
+        List<Long> ids = new ArrayList<>();
+        for (int i = 0; i < 500; i++) {
+            ids.add(NOT_EXIST_ID);  // 全用不存在的 ID，避免真实创建记录
+        }
+
+        List<FileInfo> infos = fileService.batchGetFileInfo(ids, UPLOADER_ID);
+        assertNotNull(infos);
+        assertTrue(infos.isEmpty());
+    }
+
+    /**
+     * cleanupZombieFiles 并发竞态：已确认（CONFIRMED）的"旧"记录不应被清理。
+     * <p>模拟场景：zombie 扫描的 selectList 与 deleteById 之间，客户端完成 confirmUpload
+     * 将 status 改为 CONFIRMED。修复后 delete 带 status=PENDING 条件，不会误删已确认记录。
+     * <p>构造方式：创建 PENDING 文件 → 把 created_at 改到 30 分钟前使其命中 zombie 条件
+     * → 实际上传对象并 confirmUpload 转为 CONFIRMED → 调用 cleanupZombieFiles → 记录应仍在且为 CONFIRMED。
+     */
+    @Test
+    @Order(30)
+    void shouldNotDeleteConfirmedRecordDuringZombieCleanup() {
+        // 1. 创建 PENDING 文件
+        long id = newPendingFile();
+        FileEntity entity = fileMapper.selectById(id);
+
+        // 2. 把 created_at 改到 35 分钟前，使其落入 zombie 扫描范围
+        entity.setCreatedAt(OffsetDateTime.now().minusMinutes(35));
+        fileMapper.updateById(entity);
+
+        // 3. 实际上传对象并确认（status → CONFIRMED），模拟 selectList 之前的并发 confirm
+        uploadObject(id, new byte[1024]);
+        ConfirmUploadReq confirmReq = new ConfirmUploadReq();
+        confirmReq.setFileId(id);
+        confirmReq.setUploaderId(UPLOADER_ID);
+        fileService.confirmUpload(confirmReq);
+        assertEquals(CommonConst.FILE_STATUS_CONFIRMED,
+                fileMapper.selectById(id).getStatus(), "前置：已确认");
+
+        // 4. 触发 zombie 清理：此时记录虽"老"但 status=CONFIRMED，带条件的 delete 不应删除
+        fileService.cleanupZombieFiles();
+
+        // 5. 验证记录仍在且仍为 CONFIRMED（未被误删——修复前会无条件 deleteById 丢失元数据）
+        FileEntity after = fileMapper.selectById(id);
+        assertNotNull(after, "已确认记录不应被 zombie 清理删除");
+        assertEquals(CommonConst.FILE_STATUS_CONFIRMED, after.getStatus());
     }
 }

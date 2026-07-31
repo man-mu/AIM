@@ -37,7 +37,7 @@
 
 一份 application.yml 同时承担三件事：① Nacos 连接属性 ② 触发拉取 ③ 兜底。**不再新建 bootstrap.yml**。
 
-**模板**（替换 `{service-name}` / `{HTTP 端口，纯 Dubbo Provider 则删掉 server.port}`）：
+**模板**（替换 `{service-name}` / `{HTTP 端口}`，所有业务服务均需 `server.port` —— spec-rev: 架构 1 双协议暴露，见 [controller-spec.md](./controller-spec.md)）：
 
 ```yaml
 # application.yml
@@ -66,7 +66,7 @@ spring:
       - optional:nacos:{service-name}.yml
       - optional:nacos:application.yml?group=COMMON_GROUP
 
-# 纯 Dubbo Provider 没有 HTTP 端口，删掉 server 段
+# 所有业务服务均需 HTTP 端口（架构 1 双协议暴露）
 server:
   port: ${SERVER_PORT:xxxx}
 ```
@@ -127,7 +127,7 @@ spring:
 | MyBatis | `mybatis-plus.configuration.map-underscore-to-camel-case` | Nacos（共享 common DataId 已有） |
 | 雪花算法 | `aim.snowflake.worker-id` | Nacos（每个服务分配不同 worker-id） |
 | 业务专属 | JWT 密钥 / 文件大小阈值等 | Nacos |
-| 服务端口 | `server.port` | 本地兜底（见 application.yml；纯 Dubbo Provider 无此项） |
+| 服务端口 | `server.port` | 本地兜底（见 application.yml；架构 1 双协议暴露，所有业务服务都需要） |
 | Nacos 连接 | `spring.cloud.nacos.*` | 本地 application.yml（必须，触发拉取用） |
 
 ### 3.3 共享配置 COMMON_GROUP/application.yml

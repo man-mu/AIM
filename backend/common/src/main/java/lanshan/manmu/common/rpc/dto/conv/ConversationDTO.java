@@ -25,4 +25,6 @@ public class ConversationDTO {
     private boolean isMutedAll;
     private long createdAt;
     private long updatedAt;
+    /** 未读消息数（由 conv-service 查 Redis 填充，spec-rev: listConversations/getConversation 需要展示未读数） */
+    private long unreadCount;
 }

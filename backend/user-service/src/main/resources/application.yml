@@ -22,6 +22,14 @@ spring:
       # optional: 表示 Nacos 不可达时不阻塞启动（走兜底）
       - optional:nacos:user-service.yml
       - optional:nacos:application.yml?group=COMMON_GROUP
+  jackson:
+    serialization:
+      write-bigdecimal-as-plain: true
 
 server:
   port: ${SERVER_PORT:8081}
+  forward-headers-strategy: framework
+
+dubbo:
+  qos:
+    enable: false  # 禁用 QoS 运维端口（22222），避免多服务同主机启动时端口冲突
