@@ -56,8 +56,8 @@ export function mapConversation(dto: ConversationDTO, settings?: ConversationSet
     announcement: dto.announcement,
     isMutedAll: dto.isMutedAll,
     unreadCount: dto.unreadCount,
-    isPinned: settings?.isPinned ?? false,
-    isDnd: settings?.isMuted ?? false,
+    isPinned: settings?.pinned ?? false,
+    isDnd: settings?.muted ?? false,
     nickname: settings?.nickname ?? '',
     createdAt: dto.createdAt,
   };

@@ -19,7 +19,7 @@ export interface LogoutParams {
 
 // POST /auth/register
 export interface RegisterParams {
-  /** 3~32 字符。 */
+  /** 3~64 字符（契约：^[A-Za-z0-9_]+$）。 */
   username: string;
   /** 6~32 字符。 */
   password: string;
@@ -41,11 +41,14 @@ export interface ValidateData {
   expiresAt: number;
 }
 
-// POST /auth/refresh（仅返回新的 accessToken，refreshToken 不变）
+// POST /auth/refresh（4 字段；每次 refresh 轮换 —— 旧 refreshToken 一次性吊销，
+// 客户端必须用返回的新 refreshToken 覆盖本地存储）
 export interface RefreshParams {
   refreshToken: string;
 }
 export interface RefreshData {
   accessToken: string;
+  refreshToken: string;
   accessExpire: number;
+  refreshExpire: number;
 }

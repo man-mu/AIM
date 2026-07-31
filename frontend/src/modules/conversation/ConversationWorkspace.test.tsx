@@ -142,7 +142,7 @@ describe('ConversationWorkspace 数据流', () => {
     useWorkspaceStore.setState({ isDetailPanelOpen: true, isMobileChatOpen: false, isCreateDialogOpen: false });
 
     convApiMock.list.mockResolvedValue({ conversations: [conversationDto({})], total: 1 });
-    convApiMock.getSettings.mockResolvedValue({ isMuted: false, isPinned: false, nickname: '' });
+    convApiMock.getSettings.mockResolvedValue({ muted: false, pinned: false, nickname: '' });
     convApiMock.getMembers.mockResolvedValue({
       members: [
         { userId: '1001', username: '我自己', avatar: '', role: 1, alias: '', joinedAt: 1, lastReadSeq: 2, isMuted: false, muteUntil: 0, memberType: 1, botId: '0' },

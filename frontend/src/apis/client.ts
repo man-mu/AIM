@@ -40,7 +40,9 @@ installMockAdapter(client);
 // ---------------------------------------------------------------------------
 interface RefreshPayload {
   accessToken: string;
+  refreshToken: string;
   accessExpire: number;
+  refreshExpire: number;
 }
 
 const runTokenRefresh = createSingleFlight(async (): Promise<void> => {
@@ -58,6 +60,9 @@ const runTokenRefresh = createSingleFlight(async (): Promise<void> => {
   const data = unwrapEnvelope(response.data, '/auth/refresh');
   storage.setAccessToken(data.accessToken);
   storage.setAccessExpire(data.accessExpire);
+  // 契约：refresh 每次轮换（旧 refreshToken 已一次性吊销），必须保存新值。
+  storage.setRefreshToken(data.refreshToken);
+  storage.setRefreshExpire(data.refreshExpire);
 });
 
 let sessionExpiredNotified = false;
@@ -107,11 +112,14 @@ async function replayWithFreshToken<T>(
 // 拦截器
 // ---------------------------------------------------------------------------
 client.interceptors.request.use(async (config) => {
-  if (isPublicAuthPath(config.url) || config.skipAuthHandling) {
+  // 白名单接口（login/register/refresh）不附加 token。
+  if (isPublicAuthPath(config.url)) {
     return config;
   }
 
-  if (shouldProactivelyRefresh()) {
+  // skipAuthHandling（如 logout）只跳过静默刷新/重放逻辑，token 仍必须附加
+  // —— logout 是需鉴权接口，不带 Authorization 会被网关 401 拦截。
+  if (!config.skipAuthHandling && shouldProactivelyRefresh()) {
     // 主动刷新失败不阻塞请求：让其自然 401 后走 reactive 流程兜底。
     await runTokenRefresh().catch(() => undefined);
   }

@@ -91,12 +91,22 @@ describe('auth & bootstrap', () => {
     expect(good.envelope.code).toBe(0);
   });
 
-  it('refresh issues a fresh access token; expired access token gets 401', () => {
+  it('refresh returns 4 fields and rotates the refresh token (old one revoked)', () => {
     const session = register('阿测001');
-    const refreshed = expectOk<{ accessToken: string; accessExpire: number }>(
+    const refreshed = expectOk<{ accessToken: string; refreshToken: string; accessExpire: number; refreshExpire: number }>(
       call({ method: 'POST', url: '/auth/refresh', body: { refreshToken: session.refreshToken } }),
     );
     expect(refreshed.accessToken).not.toBe(session.accessToken);
+    expect(refreshed.refreshToken).not.toBe(session.refreshToken);
+    expect(refreshed.refreshExpire).toBeGreaterThan(0);
+
+    // 旧 refreshToken 已一次性吊销。
+    const replayOld = call({ method: 'POST', url: '/auth/refresh', body: { refreshToken: session.refreshToken } });
+    expect(replayOld.envelope.code).toBe(10005);
+
+    // 新 refreshToken 可继续轮换。
+    const again = call({ method: 'POST', url: '/auth/refresh', body: { refreshToken: refreshed.refreshToken } });
+    expect(again.envelope.code).toBe(0);
 
     // 快进 3 小时：旧 access 过期。
     scheduler.advance(3 * 60 * 60 * 1000);
@@ -148,10 +158,11 @@ describe('conversations', () => {
         token: session.accessToken,
       }),
     );
-    const settings = expectOk<{ isPinned: boolean; nickname: string; isMuted: boolean }>(
+    // 契约 §5：GET 响应键为 muted/pinned（无 is- 前缀）；PUT 请求体仍是 isMuted/isPinned。
+    const settings = expectOk<{ muted: boolean; pinned: boolean; nickname: string }>(
       call({ method: 'GET', url: `/convs/${convId}/settings`, token: session.accessToken }),
     );
-    expect(settings).toMatchObject({ isPinned: true, nickname: '组里的我', isMuted: false });
+    expect(settings).toMatchObject({ muted: false, pinned: true, nickname: '组里的我' });
 
     // 邀请产生了系统消息 → 未读，标记已读后归零。
     const detailBefore = expectOk<ConversationDTO>(call({ method: 'GET', url: `/convs/${convId}`, token: session.accessToken }));

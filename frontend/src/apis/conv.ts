@@ -20,10 +20,12 @@ export const convApi = {
     return request<ConversationDTO>(`/convs/${conversationId}`, 'GET', undefined, options);
   },
   list: (params?: ListConversationsParams, options?: { signal?: AbortSignal }) => {
-    return request<ListConversationsData>('/convs', 'GET', { pageNum: 1, pageSize: 100, ...params }, options);
+    // 契约 §5：默认 pageSize=20（上限 100）。
+    return request<ListConversationsData>('/convs', 'GET', { pageNum: 1, pageSize: 20, ...params }, options);
   },
   getMembers: (conversationId: Int64, params?: { pageNum?: number; pageSize?: number }, options?: { signal?: AbortSignal }) => {
-    return request<GetMembersData>(`/convs/${conversationId}/members`, 'GET', { pageNum: 1, pageSize: 200, ...params }, options);
+    // 契约 §5：默认 pageSize=50（上限 100）。
+    return request<GetMembersData>(`/convs/${conversationId}/members`, 'GET', { pageNum: 1, pageSize: 50, ...params }, options);
   },
   invite: (conversationId: Int64, userIds: Int64[]) => {
     return request<InviteMembersData>(`/convs/${conversationId}/members/invite`, 'POST', { userIds });

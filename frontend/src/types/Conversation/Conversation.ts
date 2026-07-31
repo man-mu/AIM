@@ -75,12 +75,14 @@ export interface InviteMembersData {
   alreadyMemberIds: Int64[];
 }
 
+/** GET /convs/:id/settings 响应（契约 §5：键名无 is- 前缀）。 */
 export interface ConversationSettingsData {
-  isMuted: boolean;
-  isPinned: boolean;
+  muted: boolean;
+  pinned: boolean;
   nickname: string;
 }
 
+/** PUT /convs/:id/settings 请求体（契约 §5：仍为 isMuted/isPinned，null 不更新）。 */
 export interface UpdateSettingsParams {
   isMuted?: boolean;
   isPinned?: boolean;

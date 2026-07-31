@@ -133,7 +133,7 @@ export function createRealtimeDispatcher(deps: DispatcherDeps): RealtimeDispatch
           break;
         }
 
-        case 'typing': {
+        case 'typing.notify': {
           const data = frame.data as { convId: string | number; userId: string | number };
           const convId = toInt64String(data.convId);
           const userId = toInt64String(data.userId);

@@ -41,7 +41,8 @@ export type DownstreamEvent =
   | { event: 'message.edited'; data: { messageId: Int64; convId: Int64; userId: Int64; newContent: MessageContent } }
   | { event: 'presence'; data: { userId: Int64; status: 'online' | 'offline' } }
   | { event: 'read_sync'; data: { convId: Int64; userId: Int64; lastReadSeq: number } }
-  | { event: 'typing'; data: { convId: Int64; userId: Int64 } }
+  // 契约 §9.2：下行输入中通知为 typing.notify（与上行 typing 区分）。
+  | { event: 'typing.notify'; data: { convId: Int64; userId: Int64 } }
   | { event: 'typing.stop'; data: { convId: Int64; userId: Int64 } }
   | { event: 'unread_count'; data: { convId: Int64; count: number } }
   | { event: 'read_receipt'; data: { messageId: Int64; userId: Int64; readAt: number } }

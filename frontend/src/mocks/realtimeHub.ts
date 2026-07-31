@@ -138,11 +138,12 @@ export function createMockRealtimeHub(options: MockRealtimeHubOptions): MockReal
       options.onMutated?.();
     }, between(600, 1500));
 
-    // 2. 正在输入…（60% 概率展示 typing）。
+    // 2. 正在输入…（60% 概率展示 typing.notify）。
     const willType = random() < 0.6;
     if (willType) {
       scheduler.schedule(() => {
-        deliver({ event: 'typing', data: { convId: message.conversationId, userId: responder } });
+        // 契约 §9.2：下行输入中事件为 typing.notify。
+        deliver({ event: 'typing.notify', data: { convId: message.conversationId, userId: responder } });
       }, between(1200, 2200));
     }
 

@@ -12,7 +12,7 @@ import { mapConversation, mapMember, sortConversations, type UiConversation, typ
 /**
  * 会话域 hooks：Query 缓存里存的是 UiConversation[]（已合并 settings、已排序）。
  *
- * 关于 settings 的 N+1：实现态接口的列表不返回 isPinned/isMuted，
+ * 关于 settings 的 N+1：实现态接口的列表不返回 muted/pinned，
  * 前端以受控并发（≤6）批量拉取首屏会话的 settings 合并进列表
  * —— 该接口设计问题已记录在 docs/api-feedback.md，等待后端在列表响应中回填。
  */
@@ -20,7 +20,7 @@ export function useConversationsQuery() {
   return useQuery<UiConversation[]>({
     queryKey: queryKeys.conversations.list,
     queryFn: async ({ signal }) => {
-      const data = await convApi.list({ pageNum: 1, pageSize: 100 }, { signal });
+      const data = await convApi.list({ pageNum: 1, pageSize: 20 }, { signal });
       const settingsList = await mapWithConcurrencySettled(
         data.conversations,
         6,
@@ -48,7 +48,7 @@ export function useMembersQuery(conversationId: string | null) {
   return useQuery<UiMember[]>({
     queryKey: queryKeys.conversations.members(conversationId ?? 'none'),
     queryFn: async ({ signal }) => {
-      const data = await convApi.getMembers(conversationId as string, { pageNum: 1, pageSize: 200 }, { signal });
+      const data = await convApi.getMembers(conversationId as string, { pageNum: 1, pageSize: 50 }, { signal });
       return data.members.map(mapMember);
     },
     enabled: conversationId !== null,

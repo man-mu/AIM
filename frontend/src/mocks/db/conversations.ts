@@ -300,7 +300,8 @@ export function setAnnouncement(state: DbState, conversationId: string, operator
 export function getSettings(state: DbState, conversationId: string, userId: string): ConversationSettingsData {
   requireConversation(state, conversationId);
   const member = requireMember(state, conversationId, userId);
-  return { isMuted: member.dnd, isPinned: member.pinned, nickname: member.nickname };
+  // 契约 §5：响应键为 muted/pinned（无 is- 前缀）。
+  return { muted: member.dnd, pinned: member.pinned, nickname: member.nickname };
 }
 
 export function updateSettings(
