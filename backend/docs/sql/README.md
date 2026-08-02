@@ -51,7 +51,7 @@ docker compose restart nacos
 - 5 个中间件容器 Up（postgres/redis/kafka/nacos/minio）
 - postgres 内 2 个数据库：`aim`（6 个业务 schema）+ `nacos`（13 张元数据表）
 - Nacos 控制台 `http://localhost:8080/`，账号 `nacos / nacos`
-- Nacos 配置中心 3 个 namespace（dev/test/prod）× 2 个 DataId（common + user-service）
+- Nacos 配置中心 3 个 namespace（dev/test/prod）× 7 个 DataId（`application.yml` + user/file/conv/friend/message/signaling/ws-gateway 各服务配置）
 
 ## 非 docker 环境初始化
 
