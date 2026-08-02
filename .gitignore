@@ -23,3 +23,6 @@ logs/
 # 环境配置 (保留 .env.example)
 .env
 .worktrees/
+
+# 个人知识库（vibe-upskill 沉淀，不进版本控制）
+knowledge/
