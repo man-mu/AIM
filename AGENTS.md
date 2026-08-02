@@ -2,7 +2,6 @@
 
 ## 语言
 
-- 主/从 agent 必须默认使用 `简体中文` 作为自然语言。
 - 写文档、总结、计划、问题澄清时优先中文；代码标识符和命令保持原文。
 
 ## 工作流
@@ -165,12 +164,3 @@ pnpm test                        # 单元测试（vitest）
 pnpm lint                        # ESLint
 pnpm build                       # 生产构建
 ```
-
-## 本机环境
-
-- JDK 21 / Maven 3.9.16：通过 SDKMAN 管理（`~/.sdkman/candidates/java/current`、`~/.sdkman/candidates/maven/current`，已配阿里云镜像）
-- 前端：Node + pnpm（无全局 pnpm 时用 `corepack pnpm`）
-- 网络问题：下载依赖失败时设置代理 `export http_proxy=http://127.0.0.1:7890; export https_proxy=http://127.0.0.1:7890`
-- 参考项目：`/Users/manmu/code/GoLang_projrct/MAIM`（Go 实现的同类 IM 系统）
-- 需求文档：`/Users/manmu/code/IDEA_project/AIM/要求.md`
-- 骨架计划：`/Users/manmu/code/IDEA_project/AIM/plan.md`
