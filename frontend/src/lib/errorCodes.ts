@@ -29,6 +29,7 @@ export const ERROR_MESSAGES: Readonly<Record<number, string>> = {
   20005: '好友分组不存在',
   20006: '对方已被你拉黑',
   20007: '你已被对方拉黑',
+  20008: '未拉黑该用户',
 
   // conv-service (30xxx)
   30001: '会话不存在',

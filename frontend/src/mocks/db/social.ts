@@ -216,7 +216,7 @@ export function blockUser(state: DbState, ownerId: string, targetId: string, now
 
 export function unblockUser(state: DbState, ownerId: string, targetId: string): void {
   if (!state.blacklist.delete(pairKey(ownerId, targetId))) {
-    throw new MockDbError(20002, '该用户不在黑名单中');
+    throw new MockDbError(20008, '未拉黑该用户');
   }
 }
 

@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS friend.friend_requests (
 CREATE INDEX IF NOT EXISTS idx_friend_requests_from ON friend.friend_requests(from_user_id);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend.friend_requests(to_user_id);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_status ON friend.friend_requests(status);
+-- 待处理申请唯一约束：同一对 (from,to) 同时只能有一条 pending，并发防双申请（accept/reject/cancel 后 status≠1 不参与约束）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_friend_requests_pending_pair
+    ON friend.friend_requests(from_user_id, to_user_id) WHERE status = 1;
 
 -- 拉黑表
 CREATE TABLE IF NOT EXISTS friend.user_blocks (

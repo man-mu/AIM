@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 
 /**
- * 查看分组列表响应。
+ * 查看分组列表响应（契约 §4：{@code {list, total}}，内置 groupId=0 默认分组）。
  */
 @Data
 @NoArgsConstructor
@@ -15,5 +15,6 @@ import java.io.Serializable;
 public class ListGroupsResp implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private List<FriendGroupDTO> groups;
+    private List<FriendGroupDTO> list;
+    private long total;
 }

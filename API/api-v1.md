@@ -18,7 +18,7 @@
 |---|---|
 | 网关 Base URL | `http://localhost:9080/api/v1`（`gateway-service`，端口 9080） |
 | WS 地址 | `ws://localhost:8081/ws`（`ws-gateway-service`，连接参数 `?token=<accessToken>&device_id=<deviceId>`） |
-| 网关路由 | `/api/v1/auth/**`、`/api/v1/users/**` → user-service；`/api/v1/convs/**` → conv-service；`/api/v1/files/**` → file-service；friend/message/notification 路由**待实现** |
+| 网关路由 | `/api/v1/auth/**`、`/api/v1/users/**` → user-service；`/api/v1/convs/**` → conv-service；`/api/v1/files/**` → file-service；`/api/v1/friends/**` → friend-service（✅ 已实现）；message/notification 路由**待实现** |
 | 鉴权白名单 | `POST /auth/login`、`POST /auth/register`、`POST /auth/refresh`、`/public/**`（前缀匹配） |
 
 ### 1.2 统一响应壳 Result\<T\>
@@ -101,7 +101,7 @@
 
 ---
 
-## 4. Friend 域（⏳ 待实现，契约按前端 mock 定稿）
+## 4. Friend 域（✅ 已实现）
 
 **状态码**：`FriendRequestStatus` 1=待处理 2=已接受 3=已拒绝 4=已取消
 
@@ -112,9 +112,12 @@
 - `BlacklistEntryDTO`：`userId`、`username`、`avatar`、`createdAt`
 - 分页壳 `PagedList<T>`：`{list: T[], total, pageNum, pageSize}`
 
+> 在线状态说明：`FriendDTO.status` 的在线判定依赖 signaling-service 的 presence（Phase B），
+> Phase 1 后端恒返回 `'offline'`，字段结构已就绪。
+
 | 接口 | 方法+路径 | 请求 | 响应 data | 错误码 |
 |---|---|---|---|---|
-| 发申请 | `POST /friends/requests` | `toUserId`；`message` | `{requestId}`（有 pending 时幂等返回原申请） | 20001；20004；20006；20007 |
+| 发申请 | `POST /friends/requests` | `toUserId`；`message` | `{requestId}`（有 pending 时幂等返回原申请） | 10001 目标不存在；20001；20004；20006；20007 |
 | 待处理申请 | `GET /friends/requests/pending` | query：`pageNum`?、`pageSize`?（默认 50） | `PagedList<FriendRequestDTO>`（仅 status=1 incoming） | — |
 | 已发送申请 | `GET /friends/requests/sent` | query：`pageNum`?、`pageSize`?（默认 50） | `PagedList<FriendRequestDTO>`（outgoing 全状态） | — |
 | 接受申请 | `POST /friends/requests/{requestId}/accept` | body `{}` | `FriendRequestDTO`（status→2，双方建好友） | 20002 |
@@ -126,13 +129,15 @@
 | 重命名分组 | `PUT /friends/groups/{groupId}` | `name` | `{groupId, name}` | 20005 |
 | 删除分组 | `DELETE /friends/groups/{groupId}` | — | `null`（组内好友回落默认分组） | 20005 |
 | 黑名单 | `GET /friends/blacklist` | query：`pageNum`?、`pageSize`?（默认 100） | `PagedList<BlacklistEntryDTO>` | — |
-| 拉黑 | `POST /friends/blacklist/{userId}` | body `{}` | `null`（拉黑即解除好友+取消双方 pending；重复拉黑幂等） | 20004 不能拉黑自己 |
-| 取消拉黑 | `DELETE /friends/blacklist/{userId}` | — | `null` | 20002 不在黑名单 |
+| 拉黑 | `POST /friends/blacklist/{userId}` | body `{}` | `null`（拉黑即解除好友+取消双方 pending；重复拉黑幂等） | 10001 目标不存在；20004 不能拉黑自己 |
+| 取消拉黑 | `DELETE /friends/blacklist/{userId}` | — | `null` | 20008 不在黑名单 |
 | 删除好友 | `DELETE /friends/{friendId}` | — | `null` | 20003 |
 | 设置备注 | `PUT /friends/{friendId}/remark` | `remark` | `null` | 20003 |
 | 移动分组 | `PUT /friends/{friendId}/group` | `groupId`（0=默认） | `null` | 20003；20005 |
 
 > ⚠️ 与初始规划差异（按前端定稿）：拉黑路径为 `/friends/blacklist/{userId}`（非 `/friends/{userId}/block`）；分组字段 `groupId`（非 `id`）；黑名单字段 `createdAt`（非 `blockedAt`）；分组列表外层 `list`（非 `groups`）。
+>
+> ℹ️ 语义补充（2026-08-02 实现定稿）：删除好友/拉黑**不影响既有会话与历史消息**（会话由 conv-service 独立管理）；好友列表 `groupId` 缺省或 `0` 时返回全部好友（不按默认分组过滤）；pending 申请并发幂等由部分唯一索引 `(from_user_id, to_user_id) WHERE status=1` 保证（撞键幂等返回原申请）。
 
 ---
 
@@ -280,6 +285,7 @@
 | 20005 | 好友分组不存在 | friend |
 | 20006 | 对方已被你拉黑 | friend |
 | 20007 | 你已被对方拉黑 | friend |
+| 20008 | 未拉黑该用户 | friend（取消拉黑时目标不在黑名单） |
 | 30001 | 会话不存在 | conv（优先于 30004） |
 | 30002 | 用户已是会话成员 | 预留（invite 已存在者归入 alreadyMemberIds） |
 | 30003 | 用户不在会话中 | kick/mute/transfer 目标不在会话 |
@@ -324,6 +330,10 @@
 | 10 | 错误码 10008 文案 | 统一为"登录失败次数过多" | 与实现语义一致 |
 | 11 | role 枚举 | 后端版：1=OWNER 2=ADMIN 3=MEMBER | 后端已实现 |
 | 12 | 群名/公告上限 | 后端版：32/500 | 后端已实现 |
+| 13 | 取消拉黑错误码 | 后端版：20008（NOT_BLOCKED，"未拉黑该用户"） | ErrorCode 20001-20008 已定稿；契约表格旧值 20002 同步修正，前端 errorCodes.ts 补 20008 |
+| 14 | 好友申请幂等并发 | 部分唯一索引 `(from_user_id, to_user_id) WHERE status=1` | 防并发双 pending，无锁；撞键捕获 DuplicateKeyException 幂等返回原申请 |
+| 15 | 发申请/拉黑目标不存在 | 复用 user 域 10001 | mock requireUser 抛 10001（非 400），契约错误码列补 10001 |
+| 16 | 好友在线状态 | Phase 1 恒 `'offline'` | signaling presence 未实现（Phase B 接入），字段结构已就绪 |
 
 ---
 
@@ -335,7 +345,7 @@
 
 ## 附录 B：后续开发指引
 
-- **friend-service 实现**：按第 4 章契约（路径/字段/错误码已定稿），错误码 20001-20008 已就绪
+- **friend-service 实现**（✅ 2026-08-02 完成）：按第 4 章契约落地（HTTP Controller + Dubbo Provider），错误码 20001-20008 全部投入使用；common 模块 friend DTO 已对齐契约（`groupId/createdAt/list` 等字段），新增 `BlacklistEntryDTO`/`MoveGroupReq`/`RenameGroupResp`；集成测试（Testcontainers）与单测全绿
 - **message-service 实现**：按第 6 章契约 + common 模块 `event/MessageCreatedEvent` 等事件 DTO；发送拦截用 30006/30007；幂等用 clientMsgId
 - **signaling-service + ws-gateway**：按第 9 章协议（事件名已定稿），下行统一 `typing.notify`；未读 key 前缀 `aim:unread:`（CommonConst.REDIS_KEY_UNREAD）
 - **Notification**：按第 8 章契约

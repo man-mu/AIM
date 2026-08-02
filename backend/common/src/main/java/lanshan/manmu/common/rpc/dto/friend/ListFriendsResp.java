@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 
 /**
- * 查看好友列表响应。
+ * 查看好友列表响应（契约 §4 分页壳 {@code {list, total, pageNum, pageSize}}）。
  */
 @Data
 @NoArgsConstructor
@@ -15,6 +15,8 @@ import java.io.Serializable;
 public class ListFriendsResp implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private List<FriendInfoDTO> friends;
+    private List<FriendInfoDTO> list;
     private long total;
+    private int pageNum;
+    private int pageSize;
 }

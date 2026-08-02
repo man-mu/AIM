@@ -1,18 +1,15 @@
-package lanshan.manmu.common.rpc;
+package lanshan.manmu.friend.service;
 
 import lanshan.manmu.common.rpc.dto.friend.*;
 
-/**
- * 好友服务 Dubbo 接口。
- */
-public interface FriendRpcService {
+public interface FriendService {
 
     // —— 好友申请 ——
     SendFriendRequestResp sendFriendRequest(SendFriendRequestReq req);
-    void acceptFriendRequest(AcceptFriendRequestReq req);
-    void rejectFriendRequest(RejectFriendRequestReq req);
-    void cancelFriendRequest(CancelFriendRequestReq req);
     ListFriendRequestsResp listFriendRequests(ListFriendRequestsReq req);
+    FriendRequestDTO acceptFriendRequest(AcceptFriendRequestReq req);
+    FriendRequestDTO rejectFriendRequest(RejectFriendRequestReq req);
+    void cancelFriendRequest(CancelFriendRequestReq req);
 
     // —— 好友管理 ——
     ListFriendsResp listFriends(ListFriendsReq req);

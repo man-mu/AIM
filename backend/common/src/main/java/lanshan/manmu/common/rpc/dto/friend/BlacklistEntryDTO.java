@@ -6,14 +6,16 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 
 /**
- * 创建好友分组响应（契约 §4：{@code {groupId, name}}）。
+ * 黑名单条目 DTO（契约 §4：{@code userId/username/avatar/createdAt}）。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateGroupResp implements Serializable {
+public class BlacklistEntryDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    private long groupId;
-    private String name;
+    private long userId;
+    private String username;
+    private String avatar;
+    private long createdAt;
 }

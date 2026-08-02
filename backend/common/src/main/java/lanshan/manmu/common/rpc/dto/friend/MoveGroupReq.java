@@ -6,14 +6,15 @@ import lombok.NoArgsConstructor;
 import java.io.Serializable;
 
 /**
- * 创建好友分组响应（契约 §4：{@code {groupId, name}}）。
+ * 移动好友到分组请求。
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CreateGroupResp implements Serializable {
+public class MoveGroupReq implements Serializable {
     private static final long serialVersionUID = 1L;
 
+    private long userId;
+    private long friendUserId;
     private long groupId;
-    private String name;
 }

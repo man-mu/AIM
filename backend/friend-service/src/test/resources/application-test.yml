@@ -1,0 +1,37 @@
+# 集成测试专用配置（@ActiveProfiles("test") 激活）
+# 禁用 Nacos 配置拉取和服务注册，避免连真实 Nacos
+# 排除 Dubbo 自动配置：避免 @DubboReference 启动时尝试找 provider（@MockBean 由 Spring 直接替换 bean）
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.apache.dubbo.spring.boot.autoconfigure.DubboAutoConfiguration
+  cloud:
+    nacos:
+      config:
+        import-check:
+          enabled: false
+        enabled: false
+      discovery:
+        enabled: false
+    # 覆盖 application.yml 的 spring.config.import，禁用 Nacos 配置拉取
+    config:
+      import: ""
+  # 数据源和 Redis 由 FriendIntegrationTestBase 的 @DynamicPropertySource 动态注入
+
+# @EnableDubbo 在主应用类上不受 autoconfigure.exclude 影响，Dubbo 仍会启动；
+# consumer check=false 避免启动时因无 UserRpcService provider 而失败（引用由 @MockBean 替换）
+dubbo:
+  consumer:
+    check: false
+  protocol:
+    # 随机端口：避免与本地联调中的真实 friend-service（20882）冲突导致 Address already in use
+    port: -1
+
+aim:
+  snowflake:
+    worker-id: 1
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl

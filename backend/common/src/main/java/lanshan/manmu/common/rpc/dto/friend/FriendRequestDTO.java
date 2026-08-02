@@ -19,6 +19,8 @@ public class FriendRequestDTO implements Serializable {
     private String fromUsername;
     private String fromAvatar;
     private long toUserId;
+    private String toUsername;
+    private String toAvatar;
     private String message;
     private int status;
     private long createdAt;

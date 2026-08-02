@@ -32,6 +32,10 @@ spring:
           uri: lb://file-service
           predicates:
             - Path=/api/v1/files/**
+        - id: friend-service
+          uri: lb://friend-service
+          predicates:
+            - Path=/api/v1/friends/**
   config:
     import:
       - optional:nacos:gateway-service.yml
